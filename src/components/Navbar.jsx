@@ -473,7 +473,7 @@ const Navbar = () => {
           </div>
           <ul className="menu rounded-3xl border border-white/8 bg-base-200/45 p-3 text-base [&_a]:my-1 [&_a]:min-h-11 [&_a]:px-4 [&_a]:py-3">{navLinks}</ul>
           <div className="mt-4 grid grid-cols-1 gap-2">
-            <button className="btn btn-outline w-full justify-start rounded-2xl" onClick={toggleTheme}>
+            <button className="btn btn-outline w-full justify-center rounded-2xl" onClick={toggleTheme}>
               {theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
             </button>
             {user ? (
