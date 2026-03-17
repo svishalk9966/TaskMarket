@@ -1,0 +1,11 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/api/razorpay/create-order", "destination": "/api/razorpay/create-order.js" },
+    { "source": "/api/razorpay/verify-payment", "destination": "/api/razorpay/verify-payment.js" },
+    { "source": "/api/cloudinary/delete-resource", "destination": "/api/cloudinary/delete-resource.js" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
