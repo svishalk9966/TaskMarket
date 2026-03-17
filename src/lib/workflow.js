@@ -6,9 +6,11 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
+  where,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -17,6 +19,7 @@ import { db } from '../firebase';
 import { OWNER_EMAIL } from '../config';
 import { getAcceptedBidFromTask, getTaskFeeBreakdown } from './feeModel';
 import { createDisputeForTask, updatePaymentsByTaskId } from './marketplace';
+import { isPaymentFunded, normalizePaymentStatus } from './tasks';
 
 export const DELIVERIES_COLLECTION = 'deliveries';
 export const NOTIFICATIONS_COLLECTION = 'notifications';
@@ -58,17 +61,11 @@ export const CONTACT_BLOCK_MESSAGE = 'Sharing personal contact information is no
 const roundCurrency = (value) => Math.max(0, Math.round(Number(value || 0)));
 
 export const normalizeWorkflowPaymentStatus = (value = '') => {
-  const normalized = String(value || '').trim().toLowerCase();
+  const normalized = normalizePaymentStatus(value);
   if (normalized === 'released') return 'released';
-  if (normalized === 'escrow_held') return 'escrow_held';
-  if (['paid', 'success', 'captured'].includes(normalized)) return 'escrow_held';
-  if (['failed', 'refunded', 'refund_pending', 'unpaid'].includes(normalized)) return normalized;
-  return 'unpaid';
+  if (['paid', 'escrow_held'].includes(normalized)) return 'paid';
+  return normalized;
 };
-
-// Canonical check — use this everywhere instead of inline array checks
-export const isWorkflowPaymentPaid = (paymentStatus = '') =>
-  ['escrow_held', 'released', 'paid'].includes(normalizeWorkflowPaymentStatus(paymentStatus));
 
 export const getAcceptedBid = (task = {}) => getAcceptedBidFromTask(task);
 
@@ -87,6 +84,73 @@ const getLiveTaskOrThrow = async (taskId) => {
   const taskSnap = await getDoc(taskRef);
   if (!taskSnap.exists()) throw new Error('This task no longer exists.');
   return { ref: taskRef, data: { id: taskSnap.id, ...taskSnap.data() } };
+};
+
+const postJson = async (url, payload) => {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await response.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+
+  if (!response.ok) {
+    throw new Error(data.error || `Request failed with status ${response.status}.`);
+  }
+
+  return data;
+};
+
+const resolveOwnerUserIds = async () => {
+  const candidates = new Set();
+
+  const byRole = await getDocs(query(collection(db, 'users'), where('role', '==', 'owner')));
+  byRole.docs.forEach((entry) => {
+    const payload = entry.data() || {};
+    if (entry.id) candidates.add(entry.id);
+    if (payload.uid) candidates.add(payload.uid);
+  });
+
+  if (candidates.size === 0 && OWNER_EMAIL) {
+    const byEmail = await getDocs(query(collection(db, 'users'), where('email', '==', OWNER_EMAIL)));
+    byEmail.docs.forEach((entry) => {
+      const payload = entry.data() || {};
+      if (entry.id) candidates.add(entry.id);
+      if (payload.uid) candidates.add(payload.uid);
+    });
+  }
+
+  return Array.from(candidates).filter(Boolean);
+};
+
+const createOwnerNotifications = async (payload = {}) => {
+  const ownerIds = await resolveOwnerUserIds();
+  await Promise.all(ownerIds.map((ownerId) => createNotification({ ...payload, userId: ownerId })));
+};
+
+const getPaymentRecordForTask = async (taskId) => {
+  if (!taskId) return null;
+  const snapshot = await getDocs(query(collection(db, 'payments'), where('taskId', '==', taskId)));
+  if (!snapshot.docs.length) return null;
+  const ranked = snapshot.docs
+    .map((entry) => ({ id: entry.id, ...entry.data() }))
+    .sort((left, right) => {
+      const leftActive = Number(isPaymentFunded(left.paymentStatus));
+      const rightActive = Number(isPaymentFunded(right.paymentStatus));
+      if (leftActive !== rightActive) return rightActive - leftActive;
+      const leftTs = left.updatedAt?.seconds || left.paymentDate?.seconds || 0;
+      const rightTs = right.updatedAt?.seconds || right.paymentDate?.seconds || 0;
+      return rightTs - leftTs;
+    });
+
+  return ranked[0] || null;
 };
 
 const CLOUDINARY_CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
@@ -550,20 +614,27 @@ export const submitRefundRequest = async ({ task, actor, reason }) => {
   if (!task?.id) throw new Error('Task information is missing.');
   if (!actor?.uid || task.postedById !== actor.uid) throw new Error('Only the task client can request a refund.');
 
-  const paymentStatus = String(task.paymentStatus || '').toLowerCase();
-  if (!['escrow_held', 'paid'].includes(paymentStatus)) {
+  if (!isPaymentFunded(task.paymentStatus)) {
     throw new Error('Refund can only be requested after payment is confirmed.');
   }
-  if (['refund_pending', 'refunded'].includes(String(task.refundStatus || '').toLowerCase())) {
+  if (['refund_pending', 'refunded', 'partial_refund'].includes(String(task.refundStatus || '').toLowerCase())) {
     throw new Error('A refund request is already pending or has already been processed.');
   }
 
-  const grossPaid = task.clientTotalPayable || task.totalPaidByClient || task.acceptedAmount || task.amount || 0;
+  const paymentRecord = await getPaymentRecordForTask(task.id);
+  if (!paymentRecord?.paymentId) {
+    throw new Error('No captured Razorpay payment was found for this task.');
+  }
+
+  const grossPaid = task.clientTotalPayable || task.totalPaidByClient || paymentRecord.clientTotalPayable || paymentRecord.totalPaidByClient || task.acceptedAmount || task.amount || 0;
   const refundBreakdown = calculateRefundBreakdown(grossPaid);
 
   await addDoc(collection(db, REFUND_REQUESTS_COLLECTION), {
     taskId: task.id,
     taskTitle: task.title || '',
+    paymentDocId: paymentRecord.id,
+    paymentGatewayId: paymentRecord.paymentId || paymentRecord.transactionId || '',
+    paymentOrderId: paymentRecord.paymentOrderId || task.paymentOrderId || '',
     clientId: actor.uid,
     clientEmail: actor.email || '',
     clientName: actor.displayName || actor.email || 'Client',
@@ -575,9 +646,6 @@ export const submitRefundRequest = async ({ task, actor, reason }) => {
     refundFeePercent: refundBreakdown.feePercent,
     refundFeeAmount: refundBreakdown.feeAmount,
     refundAmount: refundBreakdown.refundAmount,
-    // Store Razorpay paymentId for gateway refund processing
-    paymentId: task.paymentId || task.transactionId || '',
-    razorpayPaymentId: task.paymentId || task.transactionId || '',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -590,9 +658,7 @@ export const submitRefundRequest = async ({ task, actor, reason }) => {
     clientUpdatedAt: Date.now(),
   });
 
-  // Notify admin — use OWNER_EMAIL as the userId marker for owner notifications
-  await createNotification({
-    userId: OWNER_EMAIL,
+  await createOwnerNotifications({
     taskId: task.id,
     type: 'refund_request',
     title: 'New refund request',
@@ -607,80 +673,86 @@ export const submitRefundRequest = async ({ task, actor, reason }) => {
   });
 };
 
-export const approveRefundRequest = async ({ refundRequest, adminUser }) => {
+export const approveRefundRequest = async ({ refundRequest, adminUser, task }) => {
   if (!refundRequest?.id) throw new Error('Refund request information is missing.');
 
-  const refundAmt = refundRequest.refundAmount || refundRequest.amount || 0;
-  const feeAmt = refundRequest.refundFeeAmount || 0;
-  const feePercent = refundRequest.refundFeePercent || getRefundFeePercent(refundRequest.amount || 0);
-  const razorpayPaymentId = refundRequest.paymentId || refundRequest.razorpayPaymentId || '';
+  const paymentRecord = refundRequest.paymentDocId
+    ? { id: refundRequest.paymentDocId, paymentId: refundRequest.paymentGatewayId || '' }
+    : await getPaymentRecordForTask(refundRequest.taskId);
 
-  // ── Step 1: Call real Razorpay refund API (server-side) ──────────────────
-  let gatewayRefundId = '';
-  let gatewayStatus = 'db_only';
-
-  if (razorpayPaymentId && typeof fetch !== 'undefined') {
-    try {
-      const refundResp = await fetch('/api/razorpay/refund', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          paymentId: razorpayPaymentId,
-          refundAmount: refundAmt,
-          taskId: refundRequest.taskId,
-          reason: refundRequest.reason || 'Admin approved refund',
-        }),
-      });
-      const refundData = await refundResp.json();
-      if (refundResp.ok && refundData.refundId) {
-        gatewayRefundId = refundData.refundId;
-        gatewayStatus = refundData.status || 'processed';
-      } else {
-        // Log but don't block — admin can retry via Razorpay dashboard
-        console.error('Razorpay refund API error:', refundData.error);
-        gatewayStatus = 'gateway_error';
-      }
-    } catch (err) {
-      console.error('Razorpay refund fetch failed:', err);
-      gatewayStatus = 'gateway_error';
-    }
+  if (!paymentRecord?.paymentId) {
+    throw new Error('Cannot process refund because the Razorpay payment ID is missing.');
   }
 
-  // ── Step 2: Update refund request record ─────────────────────────────────
-  await updateDoc(doc(db, REFUND_REQUESTS_COLLECTION, refundRequest.id), {
-    status: 'approved',
-    approvedById: adminUser?.uid || OWNER_EMAIL,
-    approvedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    gatewayRefundId,
-    gatewayStatus,
+  const refundPayload = await postJson('/api/razorpay/refund-payment', {
+    paymentId: paymentRecord.paymentId,
+    amount: refundRequest.refundAmount || refundRequest.amount || 0,
+    refundRequestId: refundRequest.id,
+    taskId: refundRequest.taskId,
+    reason: refundRequest.reason || '',
   });
 
-  // ── Step 3: Update task ───────────────────────────────────────────────────
+  const refundEntity = refundPayload.refund || {};
+  const normalizedRefundStatus = refundEntity.status === 'processed' || refundEntity.status === 'created'
+    ? (refundEntity.amount === refundEntity.total_amount ? 'refunded' : 'partial_refund')
+    : 'refund_pending';
+  const nextPaymentStatus = normalizedRefundStatus === 'refunded' ? 'refunded' : 'refund_pending';
+
+  await updateDoc(doc(db, REFUND_REQUESTS_COLLECTION, refundRequest.id), {
+    status: 'approved',
+    approvedById: adminUser?.uid || '',
+    approvedByEmail: adminUser?.email || '',
+    approvedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    refundGatewayId: refundEntity.id || '',
+    refundGatewayStatus: refundEntity.status || 'created',
+    refundGatewayAmount: Number(refundEntity.amount_rupees ?? refundRequest.refundAmount ?? refundRequest.amount ?? 0),
+    refundGatewayRaw: refundPayload,
+  });
+
   await updateDoc(doc(db, 'tasks', refundRequest.taskId), {
-    refundStatus: 'refunded',
-    paymentStatus: 'refunded',
-    status: 'refunded',
+    refundStatus: normalizedRefundStatus,
+    paymentStatus: nextPaymentStatus,
+    status: normalizedRefundStatus === 'refunded' ? 'refunded' : 'disputed',
     refundApprovedAt: serverTimestamp(),
-    gatewayRefundId,
+    refundProcessedAt: serverTimestamp(),
+    refundId: refundEntity.id || '',
+    refundAmount: Number(refundEntity.amount_rupees ?? refundRequest.refundAmount ?? refundRequest.amount ?? 0),
+    refundFeePercent: refundRequest.refundFeePercent,
+    refundFeeAmount: refundRequest.refundFeeAmount,
+    refundNetAmount: Number(refundEntity.amount_rupees ?? refundRequest.refundAmount ?? refundRequest.amount ?? 0),
+    escrowStatus: normalizedRefundStatus === 'refunded' ? 'refunded' : 'held',
+    payoutStatus: 'on_hold',
     updatedAt: serverTimestamp(),
     clientUpdatedAt: Date.now(),
   });
 
-  // ── Step 4: Notify client ─────────────────────────────────────────────────
-  const gatewayNote = gatewayRefundId
-    ? ` Refund ID: ${gatewayRefundId}.`
-    : (gatewayStatus === 'gateway_error' ? ' Please contact support if refund is not received within 5–7 business days.' : '');
+  await updatePaymentsByTaskId(refundRequest.taskId, {
+    refundStatus: normalizedRefundStatus,
+    paymentStatus: nextPaymentStatus,
+    payoutStatus: 'on_hold',
+    escrowStatus: normalizedRefundStatus === 'refunded' ? 'refunded' : 'held',
+    refundedAt: serverTimestamp(),
+    refundProcessedAt: serverTimestamp(),
+    refundId: refundEntity.id || '',
+    refundGatewayStatus: refundEntity.status || 'created',
+    refundAmount: Number(refundEntity.amount_rupees ?? refundRequest.refundAmount ?? refundRequest.amount ?? 0),
+    refundFeePercent: refundRequest.refundFeePercent,
+    refundFeeAmount: refundRequest.refundFeeAmount,
+  });
+
+  const refundAmt = refundEntity.amount_rupees ?? refundRequest.refundAmount ?? refundRequest.amount ?? 0;
+  const feeAmt = refundRequest.refundFeeAmount || 0;
+  const feePercent = refundRequest.refundFeePercent || getRefundFeePercent(refundRequest.amount || refundAmt);
 
   await createNotification({
     userId: refundRequest.clientId,
     taskId: refundRequest.taskId,
     type: 'refund_approved',
     title: 'Refund approved ✅',
-    message: `Your refund for task "${refundRequest.taskTitle}" has been approved. You will receive ₹${refundAmt} (after ${feePercent}% processing fee of ₹${feeAmt}).${gatewayNote}`,
+    message: `Your refund for task "${refundRequest.taskTitle}" has been approved. Refund amount: ₹${refundAmt} (after ${feePercent}% processing fee of ₹${feeAmt}).`,
   });
 
-  // ── Step 5: Notify freelancer ─────────────────────────────────────────────
   if (refundRequest.freelancerId) {
     await createNotification({
       userId: refundRequest.freelancerId,
@@ -697,7 +769,7 @@ export const rejectRefundRequest = async ({ refundRequest, adminUser, rejectReas
 
   await updateDoc(doc(db, REFUND_REQUESTS_COLLECTION, refundRequest.id), {
     status: 'rejected',
-    rejectedById: adminUser?.uid || 'admin',
+    rejectedById: adminUser?.uid || '',
     rejectReason: rejectReason.trim(),
     rejectedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),

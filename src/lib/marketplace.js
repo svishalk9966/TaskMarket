@@ -9,8 +9,8 @@ import {
   where,
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { OWNER_EMAIL } from '../config';
 import { getTaskFeeBreakdown } from './feeModel';
+import { isPaymentFunded, normalizePaymentStatus, normalizeRefundStatus } from './tasks';
 
 export const DISPUTES_COLLECTION = 'disputes';
 
@@ -22,12 +22,7 @@ const toNumber = (value) => {
 
 export const PAYMENT_ACTIVE_STATUSES = ['paid', 'escrow_held', 'released'];
 
-export const normalizePaymentState = (value = '') => {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (PAYMENT_ACTIVE_STATUSES.includes(normalized)) return normalized;
-  if (['pending', 'failed', 'refunded', 'refund_pending', 'disputed', 'unpaid'].includes(normalized)) return normalized;
-  return 'pending';
-};
+export const normalizePaymentState = (value = '') => normalizePaymentStatus(value);
 
 export const normalizeDisputeState = (value = '') => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -54,7 +49,7 @@ export const getPaymentPresentation = (payment = {}) => {
     paymentStatus: normalizePaymentState(payment.paymentStatus || payment.status),
     escrowStatus: String(payment.escrowStatus || (normalizePaymentState(payment.paymentStatus || payment.status) === 'escrow_held' ? 'held' : 'not_funded')).toLowerCase(),
     payoutStatus: String(payment.payoutStatus || 'pending').toLowerCase(),
-    refundStatus: String(payment.refundStatus || 'none').toLowerCase(),
+    refundStatus: normalizeRefundStatus(payment.refundStatus || 'none'),
     disputeStatus: normalizeDisputeState(payment.disputeStatus || ''),
     gatewayFee: toNumber(payment.gatewayFee),
     displayAcceptedAmount: toNumber(payment.acceptedAmount ?? payment.acceptedBidAmount ?? payment.grossAmount ?? payment.amount) ?? breakdown.acceptedAmount,
@@ -134,47 +129,12 @@ export const markRefundForPayment = async (payment = {}, mode = 'refunded') => {
   const presentation = getPaymentPresentation(payment);
   const refundStatus = mode === 'partial_refund' ? 'partial_refund' : 'refunded';
   const nextPaymentStatus = refundStatus === 'refunded' ? 'refunded' : 'refund_pending';
-
-  // Attempt real Razorpay refund if paymentId is available
-  let gatewayRefundId = '';
-  let gatewayStatus = 'db_only';
-  const razorpayPaymentId = payment.paymentId || payment.transactionId || '';
-  const refundAmountFull = payment.clientTotalPayable || payment.totalPaidByClient || payment.amount || 0;
-
-  if (razorpayPaymentId && refundStatus === 'refunded' && typeof fetch !== 'undefined') {
-    try {
-      const resp = await fetch('/api/razorpay/refund', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          paymentId: razorpayPaymentId,
-          refundAmount: refundAmountFull,
-          taskId: payment.taskId,
-          reason: 'Admin-initiated refund from owner panel',
-        }),
-      });
-      const data = await resp.json();
-      if (resp.ok && data.refundId) {
-        gatewayRefundId = data.refundId;
-        gatewayStatus = data.status || 'processed';
-      } else {
-        gatewayStatus = 'gateway_error';
-        console.error('Razorpay refund error:', data.error);
-      }
-    } catch (err) {
-      gatewayStatus = 'gateway_error';
-      console.error('Razorpay refund fetch error:', err);
-    }
-  }
-
   await updateDoc(doc(db, 'payments', payment.id), {
     refundStatus,
     paymentStatus: nextPaymentStatus,
     payoutStatus: 'on_hold',
     escrowStatus: refundStatus === 'refunded' ? 'refunded' : presentation.escrowStatus,
     refundedAt: serverTimestamp(),
-    gatewayRefundId,
-    gatewayStatus,
     updatedAt: serverTimestamp(),
   });
   await updateDoc(doc(db, 'tasks', payment.taskId), {
@@ -183,7 +143,6 @@ export const markRefundForPayment = async (payment = {}, mode = 'refunded') => {
     payoutStatus: 'on_hold',
     escrowStatus: refundStatus === 'refunded' ? 'refunded' : presentation.escrowStatus,
     status: refundStatus === 'refunded' ? 'refunded' : 'disputed',
-    gatewayRefundId,
     updatedAt: serverTimestamp(),
   });
 };

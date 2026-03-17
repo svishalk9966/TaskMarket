@@ -2,6 +2,7 @@ import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from 'fir
 import { db } from '../firebase';
 import { APP_NAME, formatCurrency, RAZORPAY_KEY_ID } from '../config';
 import { getAcceptedBidFromTask, getTaskFeeBreakdown } from './feeModel';
+import { isPaymentFunded, normalizePaymentStatus } from './tasks';
 
 const loadRazorpayScript = () =>
   new Promise((resolve) => {
@@ -55,7 +56,7 @@ export const launchTaskPayment = async ({ task, user }) => {
   if (!task?.id) throw new Error('Task information is missing.');
   if (!user?.uid) throw new Error('Please login first to make a payment.');
   if (task.postedById !== user.uid) throw new Error('Only the task owner can pay for this task.');
-  if (task.paymentStatus === 'paid') throw new Error('This task is already marked as paid.');
+  if (isPaymentFunded(task.paymentStatus)) throw new Error('This task is already marked as paid.');
   if (!RAZORPAY_KEY_ID) throw new Error('Missing VITE_RAZORPAY_KEY_ID.');
 
   const acceptedBid = getAcceptedBidFromTask(task);
@@ -223,7 +224,7 @@ export const launchTaskPayment = async ({ task, user }) => {
               totalPaidByClient: Number(breakdown.clientTotalPayable ?? clientTotalPayable),
               totalPlatformRevenue: Number(breakdown.totalPlatformRevenue ?? totalPlatformRevenue),
               netAmountToFreelancer: Number(breakdown.netAmountToFreelancer ?? netAmountToFreelancer),
-              escrowStatus: 'funded',
+              escrowStatus: 'held',
               lastPaymentAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             });

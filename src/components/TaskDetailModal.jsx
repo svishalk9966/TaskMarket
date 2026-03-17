@@ -4,6 +4,7 @@ import PayForTaskButton from './PayForTaskButton';
 import PublicUserIdentity from './PublicUserIdentity';
 import { getAcceptedBid, getTaskBaseAmount, getTaskPlatformFeeAmount, getTaskTotalPaidByClient } from '../lib/workflow';
 import { formatCurrency, MAX_BID_MESSAGE_LENGTH } from '../config';
+import { canViewSensitiveTaskData, isPaymentFunded } from '../lib/tasks';
 
 const deliveryTimeOptions = ['1 day', '3 days', '5 days', '7 days', 'Flexible'];
 
@@ -18,14 +19,11 @@ const TaskDetailModal = ({ task, onClose, onPlaceBid }) => {
   const [successMessage, setSuccessMessage] = useState('');
 
   const hasUserBid = useMemo(() => Boolean(user && task?.bids?.some((bid) => bid.freelancerId === user.uid)), [task?.bids, user]);
+  const canViewSensitive = useMemo(() => canViewSensitiveTaskData(task, user), [task, user]);
 
   if (!task) return null;
 
   const acceptedBid = getAcceptedBid(task);
-  const isModalClient = Boolean(user && task?.postedById && user.uid === task.postedById);
-  const isModalFreelancer = Boolean(user && (task?.selectedFreelancerId || task?.assignedTo) && user.uid === (task.selectedFreelancerId || task.assignedTo));
-  const canViewModalSensitive = isModalClient || isModalFreelancer;
-  const isModalPaymentPaid = ['paid', 'escrow_held', 'released'].includes(String(task?.paymentStatus || '').toLowerCase());
   const paymentBaseAmount = getTaskBaseAmount(task);
   const paymentPlatformFeeAmount = getTaskPlatformFeeAmount(task);
   const paymentTotalAmount = getTaskTotalPaidByClient(task);
@@ -129,15 +127,15 @@ const TaskDetailModal = ({ task, onClose, onPlaceBid }) => {
             </div>
           </div>
 
-          {acceptedBid && canViewModalSensitive ? (
+          {acceptedBid && canViewSensitive ? (
             <div className="rounded-[1.35rem] border border-base-300 bg-base-200/35 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <div className="font-semibold">Selected freelancer</div>
                   <div className="mt-1 text-sm text-base-content/60">Work starts only after payment verification.</div>
                 </div>
-                <div className={`badge ${isModalPaymentPaid ? 'badge-success' : 'badge-warning'}`}>
-                  {isModalPaymentPaid ? 'Payment verified' : 'Awaiting payment'}
+                <div className={`badge ${isPaymentFunded(task.paymentStatus) ? 'badge-success' : 'badge-warning'}`}>
+                  {isPaymentFunded(task.paymentStatus) ? 'Payment verified' : 'Awaiting payment'}
                 </div>
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.8fr)]">
@@ -154,10 +152,15 @@ const TaskDetailModal = ({ task, onClose, onPlaceBid }) => {
                 />
                 <div className="rounded-xl border border-base-300 bg-base-100/80 p-3 text-sm">
                   <div className="flex items-center justify-between gap-3"><span className="text-base-content/60">Accepted amount</span><span className="font-semibold">{formatCurrency(paymentBaseAmount)}</span></div>
-                  <div className="mt-2 flex items-center justify-between gap-3"><span className="text-base-content/60">Platform fee (5%)</span><span className="font-semibold">{formatCurrency(paymentPlatformFeeAmount)}</span></div>
+                  <div className="mt-2 flex items-center justify-between gap-3"><span className="text-base-content/60">Platform fee</span><span className="font-semibold">{formatCurrency(paymentPlatformFeeAmount)}</span></div>
                   <div className="mt-2 flex items-center justify-between gap-3 border-t border-base-300 pt-2"><span className="font-medium">Total payable</span><span className="font-bold text-primary">{formatCurrency(paymentTotalAmount)}</span></div>
                 </div>
               </div>
+            </div>
+          ) : acceptedBid ? (
+            <div className="rounded-[1.35rem] border border-base-300 bg-base-200/35 p-4">
+              <div className="font-semibold">Assignment details are private</div>
+              <div className="mt-1 text-sm text-base-content/60">Accepted freelancer details, pricing breakdown, and workflow payment data are visible only to the client, assigned freelancer, and admin.</div>
             </div>
           ) : null}
 
@@ -191,11 +194,11 @@ const TaskDetailModal = ({ task, onClose, onPlaceBid }) => {
                     </button>
                   )}
                   {hasUserBid && <span className="inline-flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-info/25 bg-info/12 px-4 py-2 text-sm font-semibold text-info sm:w-auto sm:min-w-[10.5rem]">Bid Submitted</span>}
-                  {user && user.uid === task.postedById && acceptedBid && !isModalPaymentPaid && (
+                  {user && user.uid === task.postedById && acceptedBid && !isPaymentFunded(task.paymentStatus) && (
                     <div className="w-full sm:w-auto sm:min-w-[10.5rem]"><PayForTaskButton task={task} /></div>
                   )}
                   {!acceptedBid && user && user.uid === task.postedById && <span className="inline-flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-base-300 bg-base-100 px-4 py-2 text-sm font-semibold text-base-content/65 sm:w-auto sm:min-w-[10.5rem]">Accept a bid to unlock payment</span>}
-                  {isModalPaymentPaid && isModalClient && <span className="inline-flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-success/25 bg-success/12 px-4 py-2 text-sm font-semibold text-success sm:w-auto sm:min-w-[10.5rem]">Payment Verified</span>}
+                  {isPaymentFunded(task.paymentStatus) && <span className="inline-flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-success/25 bg-success/12 px-4 py-2 text-sm font-semibold text-success sm:w-auto sm:min-w-[10.5rem]">Payment Verified</span>}
                 </div>
               </div>
             </div>
@@ -227,7 +230,7 @@ const TaskDetailModal = ({ task, onClose, onPlaceBid }) => {
             </form>
           )}
 
-          {task.bids?.length > 0 && (
+          {task.bids?.length > 0 && canViewSensitive && (
             <div className="mt-6">
               <h4 className="mb-3 font-semibold">Current Bids ({task.bids.length})</h4>
               <div className="space-y-3">

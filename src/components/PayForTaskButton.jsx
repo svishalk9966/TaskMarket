@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { launchTaskPayment, getTaskPaymentSummary } from '../lib/payment';
 import { formatCurrency } from '../config';
+import { isPaymentFunded } from '../lib/tasks';
 
 const PayForTaskButton = ({ task, onSuccess }) => {
   const { user } = useAuth();
@@ -11,9 +12,7 @@ const PayForTaskButton = ({ task, onSuccess }) => {
   const { totalPaidByClient } = getTaskPaymentSummary(task);
 
   // ── Already paid check ────────────────────────────────────────────────────
-  const paymentDone = ['escrow_held', 'paid', 'released', 'refunded'].includes(
-    String(task.paymentStatus || '').toLowerCase()
-  );
+  const paymentDone = isPaymentFunded(task.paymentStatus) || String(task.paymentStatus || '').toLowerCase() === 'refunded';
 
   if (paymentDone) {
     return (

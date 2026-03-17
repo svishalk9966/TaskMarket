@@ -4,7 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db, formatFirestoreDate } from '../../firebase';
 import LoadingSpinner from '../../components/LoadingSpinner';
-import { approveRefundRequest, rejectRefundRequest, calculateRefundBreakdown, getRefundFeePercent } from '../../lib/workflow';
+import { approveRefundRequest, rejectRefundRequest, getRefundFeePercent } from '../../lib/workflow';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency } from '../../config';
 
@@ -132,7 +132,7 @@ const OwnerRefunds = () => {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-base-content sm:text-3xl">Refund Requests</h1>
-        <p className="mt-1 text-sm text-base-content/55">Review and action client refund requests. Approving notifies the client, admin, and freelancer.</p>
+        <p className="mt-1 text-sm text-base-content/55">Review and action client refund requests. Approving runs the Razorpay refund flow, updates records, and notifies the client and freelancer.</p>
       </div>
 
       {/* Stats */}
@@ -210,7 +210,7 @@ const OwnerRefunds = () => {
                       <div className="text-lg font-bold text-primary">{formatCurrency(req.refundAmount || req.amount || 0)}</div>
                       <div className="text-xs text-success">Refund to client</div>
                       {req.refundFeeAmount > 0 && (
-                        <div className="text-xs text-error">Fee: − {formatCurrency(req.refundFeeAmount || calculateRefundBreakdown(req.amount || 0).feeAmount)} ({req.refundFeePercent || getRefundFeePercent(req.amount || 0)}%)</div>
+                        <div className="text-xs text-error">Fee: − {formatCurrency(req.refundFeeAmount)} ({req.refundFeePercent || getRefundFeePercent(req.amount || 0)}%)</div>
                       )}
                       <div className="text-xs text-base-content/45">Paid: {formatCurrency(req.amount || 0)}</div>
                     </div>
@@ -239,17 +239,6 @@ const OwnerRefunds = () => {
                     <div className="rounded-xl border border-error/20 bg-error/5 p-3">
                       <p className="text-xs font-semibold uppercase tracking-wider text-error/60 mb-1">Rejection note</p>
                       <p className="text-sm text-base-content/80">{req.rejectReason}</p>
-                    </div>
-                  ) : null}
-                  {req.gatewayRefundId ? (
-                    <div className="rounded-xl border border-success/20 bg-success/5 p-3">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-success/60 mb-1">Gateway refund</p>
-                      <p className="text-xs font-mono text-base-content/70">{req.gatewayRefundId}</p>
-                      <p className="text-xs text-base-content/50 mt-0.5">Status: {req.gatewayStatus || '—'}</p>
-                    </div>
-                  ) : req.status === 'approved' ? (
-                    <div className="rounded-xl border border-warning/20 bg-warning/5 p-3">
-                      <p className="text-xs text-warning/80">⚠️ No gateway refund ID recorded. Verify manually in Razorpay dashboard.</p>
                     </div>
                   ) : null}
 

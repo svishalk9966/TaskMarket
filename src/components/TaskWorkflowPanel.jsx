@@ -18,10 +18,12 @@ import {
   deleteTaskByClient,
   repostExpiredTask,
   calculateRefundBreakdown,
+  getRefundFeePercent,
 } from '../lib/workflow';
 import { formatFirestoreDate } from '../firebase';
 import PublicUserIdentity from './PublicUserIdentity';
 import PayForTaskButton from './PayForTaskButton';
+import { isPaymentFunded } from '../lib/tasks';
 
 const emptyProgress = { preview: 0, attachment: 0 };
 
@@ -62,13 +64,10 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
   const acceptedBid = useMemo(() => getAcceptedBid(task), [task]);
   const isClient = task.postedById === user?.uid;
   const isSelectedFreelancer = (task.selectedFreelancerId || task.assignedTo) === user?.uid;
-  // Canonical: escrow_held = payment received and held safely
-  const isPaymentPaid = ['paid', 'escrow_held', 'released'].includes(
-    String(task.paymentStatus || '').toLowerCase()
-  );
-  const canSubmitDelivery = isSelectedFreelancer && isPaymentPaid && ['in_progress', 'revision_requested'].includes(task.status);
-  const canReviewDelivery = isClient && task.status === 'delivered';
-  const canAddWorkspaceUpdate = isPaymentPaid && (isClient || isSelectedFreelancer);
+  const isPaymentPaid = isPaymentFunded(task.paymentStatus);
+  const canSubmitDelivery = mode === 'assigned' && isSelectedFreelancer && isPaymentPaid && ['in_progress', 'revision_requested'].includes(task.status);
+  const canReviewDelivery = mode === 'client' && isClient && ['delivered', 'revision_requested'].includes(task.status);
+  const canAddWorkspaceUpdate = mode !== 'readonly' && (isClient || isSelectedFreelancer);
   const baseAmount = getTaskBaseAmount(task);
   const platformFeeAmount = getTaskPlatformFeeAmount(task);
   const platformFeePercent = getTaskPlatformFeePercent(task);
@@ -76,7 +75,7 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
   const freelancerFeeAmount = Math.max(0, Math.round(Number(task.freelancerFeeAmount ?? (baseAmount * (platformFeePercent / 100))) || 0));
   const netAmountToFreelancer = Math.max(0, Math.round(Number(task.netAmountToFreelancer ?? (baseAmount - freelancerFeeAmount)) || 0));
   const showFreelancerNetSummary = isSelectedFreelancer && !isClient;
-  const canRequestRefund = isClient && ['escrow_held', 'paid'].includes(task.paymentStatus) && !['refund_pending', 'refunded'].includes(String(task.refundStatus || '').toLowerCase()) && ['in_progress', 'awaiting_payment', 'delivered', 'revision_requested'].includes(task.status);
+  const canRequestRefund = isClient && isPaymentFunded(task.paymentStatus) && !['refund_pending', 'refunded', 'partial_refund'].includes(String(task.refundStatus || '').toLowerCase()) && ['in_progress', 'awaiting_payment', 'delivered', 'revision_requested'].includes(task.status);
   const refundIsPending = String(task.refundStatus || '').toLowerCase() === 'refund_pending';
   const refundIsDone = String(task.refundStatus || '').toLowerCase() === 'refunded';
   const canDeleteTask = isClient && ['open', 'expired'].includes(task.status);
@@ -204,7 +203,7 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
         <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
           <span className="badge badge-outline">{task.status || 'open'}</span>
           <span className={`badge ${isPaymentPaid ? 'badge-success' : task.status === 'awaiting_payment' ? 'badge-warning' : 'badge-outline'}`}>
-            {isPaymentPaid ? '✅ Payment: held in escrow' : `Payment: ${task.paymentStatus || 'unpaid'}`}
+            Payment: {task.paymentStatus || 'unpaid'}
           </span>
         </div>
       </div>
@@ -294,8 +293,8 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
 
           {isPaymentPaid ? (
             <div className="rounded-2xl border border-success/30 bg-success/10 p-4 text-sm text-base-content/80">
-              <div className="font-semibold">✅ Order active — funds in escrow</div>
-              <p className="mt-1">Payment verified. Funds are securely held in escrow. Delivery tools are now unlocked for the selected freelancer.</p>
+              <div className="font-semibold">Order active</div>
+              <p className="mt-1">Payment has been verified and funds are now held in escrow. Delivery tools are unlocked for the selected freelancer.</p>
             </div>
           ) : null}
         </div>
