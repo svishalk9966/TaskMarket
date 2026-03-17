@@ -33,6 +33,11 @@ const TaskDetailPanel = ({ task, onPlaceBid, className = '' }) => {
 
   const hasUserBid = useMemo(() => Boolean(user && task?.bids?.some((bid) => bid.freelancerId === user.uid)), [task?.bids, user]);
 
+  // Privacy gate: only client, selected freelancer, or admin can see sensitive workflow data
+  const isTaskClient = Boolean(user && task?.postedById && user.uid === task.postedById);
+  const isSelectedFreelancer = Boolean(user && (task?.selectedFreelancerId || task?.assignedTo) && user.uid === (task.selectedFreelancerId || task.assignedTo));
+  const canViewSensitiveData = isTaskClient || isSelectedFreelancer;
+
   if (!task) {
     return (
       <section className={`sticky top-28 rounded-[12px] border border-dashed border-base-300 bg-base-100/90 p-8 text-center shadow-sm ${className}`.trim()}>
@@ -180,23 +185,23 @@ const TaskDetailPanel = ({ task, onPlaceBid, className = '' }) => {
                     </button>
                   ) : null}
                   {hasUserBid ? <span className="inline-flex min-h-[3.5rem] w-full items-center justify-center rounded-full border border-info/25 bg-info/12 px-4 py-3 text-sm font-semibold text-info sm:w-auto sm:min-w-[11rem]">✓ Bid Submitted</span> : null}
-                  {user && user.uid === task.postedById && acceptedBid && task.paymentStatus !== 'paid' && task.paymentStatus !== 'released' ? <div className="w-full sm:w-auto sm:min-w-[11rem]"><PayForTaskButton task={task} /></div> : null}
+                  {user && user.uid === task.postedById && acceptedBid && !['paid','released','escrow_held'].includes(task.paymentStatus) ? <div className="w-full sm:w-auto sm:min-w-[11rem]"><PayForTaskButton task={task} /></div> : null}
                   {!acceptedBid && user && user.uid === task.postedById ? <span className="inline-flex min-h-[3.5rem] w-full items-center justify-center rounded-full border border-base-300 bg-base-100 px-4 py-3 text-sm font-semibold text-base-content/65 sm:w-auto sm:min-w-[12rem]">Accept a bid to unlock payment</span> : null}
-                  {task.paymentStatus === 'paid' || task.paymentStatus === 'released' ? <span className="inline-flex min-h-[3.5rem] w-full items-center justify-center rounded-full border border-success/25 bg-success/12 px-4 py-3 text-sm font-semibold text-success sm:w-auto sm:min-w-[11rem]">Payment Verified</span> : null}
+                  {['paid','released','escrow_held'].includes(task.paymentStatus) && isTaskClient ? <span className="inline-flex min-h-[3.5rem] w-full items-center justify-center rounded-full border border-success/25 bg-success/12 px-4 py-3 text-sm font-semibold text-success sm:w-auto sm:min-w-[11rem]">✅ Payment Verified</span> : null}
                 </div>
               </div>
             </div>
           </div>
 
-          {acceptedBid ? (
+          {acceptedBid && canViewSensitiveData ? (
             <div className="rounded-[1.6rem] border border-base-300 bg-base-100 p-5 shadow-[0_12px_30px_rgba(15,23,42,0.06)] sm:p-6">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <h4 className="text-lg font-semibold">Selected freelancer</h4>
                   <p className="mt-1 text-sm text-base-content/60">Work starts only after payment verification.</p>
                 </div>
-                <div className={"badge " + ((task.paymentStatus === 'paid' || task.paymentStatus === 'released') ? 'badge-success' : 'badge-warning')}>
-                  {task.paymentStatus === 'paid' || task.paymentStatus === 'released' ? 'Payment verified' : 'Awaiting payment'}
+                <div className={"badge " + (['paid','released','escrow_held'].includes(task.paymentStatus) ? 'badge-success' : 'badge-warning')}>
+                  {['paid','released','escrow_held'].includes(task.paymentStatus) ? 'Payment verified' : 'Awaiting payment'}
                 </div>
               </div>
               <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
@@ -216,10 +221,14 @@ const TaskDetailPanel = ({ task, onPlaceBid, className = '' }) => {
                 </div>
                 <div className="rounded-[1.35rem] border border-base-300 bg-base-200/35 p-4 text-sm">
                   <div className="flex items-center justify-between gap-3"><span className="text-base-content/60">Accepted amount</span><span className="font-semibold">{formatCurrency(paymentBaseAmount)}</span></div>
-                  <div className="mt-2 flex items-center justify-between gap-3"><span className="text-base-content/60">Platform fee (5%)</span><span className="font-semibold">{formatCurrency(paymentPlatformFeeAmount)}</span></div>
+                  <div className="mt-2 flex items-center justify-between gap-3"><span className="text-base-content/60">Platform fee ({task.clientPlatformFeePercent || task.platformFeePercent || 5}%)</span><span className="font-semibold">{formatCurrency(paymentPlatformFeeAmount)}</span></div>
                   <div className="mt-2 flex items-center justify-between gap-3 border-t border-base-300 pt-2"><span className="font-medium">Total payable</span><span className="font-bold text-primary">{formatCurrency(paymentTotalAmount)}</span></div>
                 </div>
               </div>
+            </div>
+          ) : acceptedBid && !canViewSensitiveData ? (
+            <div className="rounded-[1.6rem] border border-base-300/60 bg-base-200/30 p-4 text-sm text-base-content/55 text-center">
+              A freelancer has been selected for this task.
             </div>
           ) : null}
 

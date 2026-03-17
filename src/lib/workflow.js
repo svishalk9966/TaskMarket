@@ -14,6 +14,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { OWNER_EMAIL } from '../config';
 import { getAcceptedBidFromTask, getTaskFeeBreakdown } from './feeModel';
 import { createDisputeForTask, updatePaymentsByTaskId } from './marketplace';
 
@@ -58,10 +59,16 @@ const roundCurrency = (value) => Math.max(0, Math.round(Number(value || 0)));
 
 export const normalizeWorkflowPaymentStatus = (value = '') => {
   const normalized = String(value || '').trim().toLowerCase();
-  if (['paid', 'success', 'captured', 'released', 'escrow_held'].includes(normalized)) return normalized === 'released' ? 'released' : 'paid';
+  if (normalized === 'released') return 'released';
+  if (normalized === 'escrow_held') return 'escrow_held';
+  if (['paid', 'success', 'captured'].includes(normalized)) return 'escrow_held';
   if (['failed', 'refunded', 'refund_pending', 'unpaid'].includes(normalized)) return normalized;
   return 'unpaid';
 };
+
+// Canonical check — use this everywhere instead of inline array checks
+export const isWorkflowPaymentPaid = (paymentStatus = '') =>
+  ['escrow_held', 'released', 'paid'].includes(normalizeWorkflowPaymentStatus(paymentStatus));
 
 export const getAcceptedBid = (task = {}) => getAcceptedBidFromTask(task);
 
@@ -568,6 +575,9 @@ export const submitRefundRequest = async ({ task, actor, reason }) => {
     refundFeePercent: refundBreakdown.feePercent,
     refundFeeAmount: refundBreakdown.feeAmount,
     refundAmount: refundBreakdown.refundAmount,
+    // Store Razorpay paymentId for gateway refund processing
+    paymentId: task.paymentId || task.transactionId || '',
+    razorpayPaymentId: task.paymentId || task.transactionId || '',
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -580,9 +590,9 @@ export const submitRefundRequest = async ({ task, actor, reason }) => {
     clientUpdatedAt: Date.now(),
   });
 
-  // Notify admin via a notification (adminId = 'admin' as a well-known userId)
+  // Notify admin — use OWNER_EMAIL as the userId marker for owner notifications
   await createNotification({
-    userId: 'admin',
+    userId: OWNER_EMAIL,
     taskId: task.id,
     type: 'refund_request',
     title: 'New refund request',
@@ -597,39 +607,80 @@ export const submitRefundRequest = async ({ task, actor, reason }) => {
   });
 };
 
-export const approveRefundRequest = async ({ refundRequest, adminUser, task }) => {
+export const approveRefundRequest = async ({ refundRequest, adminUser }) => {
   if (!refundRequest?.id) throw new Error('Refund request information is missing.');
 
+  const refundAmt = refundRequest.refundAmount || refundRequest.amount || 0;
+  const feeAmt = refundRequest.refundFeeAmount || 0;
+  const feePercent = refundRequest.refundFeePercent || getRefundFeePercent(refundRequest.amount || 0);
+  const razorpayPaymentId = refundRequest.paymentId || refundRequest.razorpayPaymentId || '';
+
+  // ── Step 1: Call real Razorpay refund API (server-side) ──────────────────
+  let gatewayRefundId = '';
+  let gatewayStatus = 'db_only';
+
+  if (razorpayPaymentId && typeof fetch !== 'undefined') {
+    try {
+      const refundResp = await fetch('/api/razorpay/refund', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paymentId: razorpayPaymentId,
+          refundAmount: refundAmt,
+          taskId: refundRequest.taskId,
+          reason: refundRequest.reason || 'Admin approved refund',
+        }),
+      });
+      const refundData = await refundResp.json();
+      if (refundResp.ok && refundData.refundId) {
+        gatewayRefundId = refundData.refundId;
+        gatewayStatus = refundData.status || 'processed';
+      } else {
+        // Log but don't block — admin can retry via Razorpay dashboard
+        console.error('Razorpay refund API error:', refundData.error);
+        gatewayStatus = 'gateway_error';
+      }
+    } catch (err) {
+      console.error('Razorpay refund fetch failed:', err);
+      gatewayStatus = 'gateway_error';
+    }
+  }
+
+  // ── Step 2: Update refund request record ─────────────────────────────────
   await updateDoc(doc(db, REFUND_REQUESTS_COLLECTION, refundRequest.id), {
     status: 'approved',
-    approvedById: adminUser?.uid || 'admin',
+    approvedById: adminUser?.uid || OWNER_EMAIL,
     approvedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+    gatewayRefundId,
+    gatewayStatus,
   });
 
+  // ── Step 3: Update task ───────────────────────────────────────────────────
   await updateDoc(doc(db, 'tasks', refundRequest.taskId), {
     refundStatus: 'refunded',
     paymentStatus: 'refunded',
     status: 'refunded',
     refundApprovedAt: serverTimestamp(),
+    gatewayRefundId,
     updatedAt: serverTimestamp(),
     clientUpdatedAt: Date.now(),
   });
 
-  // Notify client with actual refund amount
-  const refundAmt = refundRequest.refundAmount || refundRequest.amount || 0;
-  const feeAmt = refundRequest.refundFeeAmount || 0;
-  const feePercent = refundRequest.refundFeePercent || REFUND_FEE_PERCENT;
+  // ── Step 4: Notify client ─────────────────────────────────────────────────
+  const gatewayNote = gatewayRefundId
+    ? ` Refund ID: ${gatewayRefundId}.`
+    : (gatewayStatus === 'gateway_error' ? ' Please contact support if refund is not received within 5–7 business days.' : '');
 
   await createNotification({
     userId: refundRequest.clientId,
     taskId: refundRequest.taskId,
     type: 'refund_approved',
     title: 'Refund approved ✅',
-    message: `Your refund for task "${refundRequest.taskTitle}" has been approved. Refund amount: ₹${refundAmt} (after ${feePercent}% processing fee of ₹${feeAmt}).`,
+    message: `Your refund for task "${refundRequest.taskTitle}" has been approved. You will receive ₹${refundAmt} (after ${feePercent}% processing fee of ₹${feeAmt}).${gatewayNote}`,
   });
 
-  // Notify freelancer — reset to awaiting_payment
+  // ── Step 5: Notify freelancer ─────────────────────────────────────────────
   if (refundRequest.freelancerId) {
     await createNotification({
       userId: refundRequest.freelancerId,

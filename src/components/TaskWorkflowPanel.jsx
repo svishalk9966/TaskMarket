@@ -18,7 +18,6 @@ import {
   deleteTaskByClient,
   repostExpiredTask,
   calculateRefundBreakdown,
-  REFUND_FEE_PERCENT,
 } from '../lib/workflow';
 import { formatFirestoreDate } from '../firebase';
 import PublicUserIdentity from './PublicUserIdentity';
@@ -63,10 +62,13 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
   const acceptedBid = useMemo(() => getAcceptedBid(task), [task]);
   const isClient = task.postedById === user?.uid;
   const isSelectedFreelancer = (task.selectedFreelancerId || task.assignedTo) === user?.uid;
-  const isPaymentPaid = ['paid', 'escrow_held', 'released'].includes(task.paymentStatus);
-  const canSubmitDelivery = mode === 'assigned' && isSelectedFreelancer && isPaymentPaid && ['in_progress', 'revision_requested'].includes(task.status);
-  const canReviewDelivery = mode === 'client' && isClient && ['delivered', 'revision_requested'].includes(task.status);
-  const canAddWorkspaceUpdate = mode !== 'readonly' && (isClient || isSelectedFreelancer);
+  // Canonical: escrow_held = payment received and held safely
+  const isPaymentPaid = ['paid', 'escrow_held', 'released'].includes(
+    String(task.paymentStatus || '').toLowerCase()
+  );
+  const canSubmitDelivery = isSelectedFreelancer && isPaymentPaid && ['in_progress', 'revision_requested'].includes(task.status);
+  const canReviewDelivery = isClient && task.status === 'delivered';
+  const canAddWorkspaceUpdate = isPaymentPaid && (isClient || isSelectedFreelancer);
   const baseAmount = getTaskBaseAmount(task);
   const platformFeeAmount = getTaskPlatformFeeAmount(task);
   const platformFeePercent = getTaskPlatformFeePercent(task);
@@ -202,7 +204,7 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
         <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
           <span className="badge badge-outline">{task.status || 'open'}</span>
           <span className={`badge ${isPaymentPaid ? 'badge-success' : task.status === 'awaiting_payment' ? 'badge-warning' : 'badge-outline'}`}>
-            Payment: {task.paymentStatus || 'unpaid'}
+            {isPaymentPaid ? '✅ Payment: held in escrow' : `Payment: ${task.paymentStatus || 'unpaid'}`}
           </span>
         </div>
       </div>
@@ -292,8 +294,8 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
 
           {isPaymentPaid ? (
             <div className="rounded-2xl border border-success/30 bg-success/10 p-4 text-sm text-base-content/80">
-              <div className="font-semibold">Order active</div>
-              <p className="mt-1">Payment has been verified and funds are now held in escrow. Delivery tools are unlocked for the selected freelancer.</p>
+              <div className="font-semibold">✅ Order active — funds in escrow</div>
+              <p className="mt-1">Payment verified. Funds are securely held in escrow. Delivery tools are now unlocked for the selected freelancer.</p>
             </div>
           ) : null}
         </div>

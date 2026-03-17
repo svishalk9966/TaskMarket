@@ -15,7 +15,7 @@ import ReceiptModal from '../components/ReceiptModal';
 const Dashboard = () => {
   const { user } = useAuth();
   const { role, canPost, canBid } = useRole();
-  const [activeTab, setActiveTab] = useState(() => canPost ? 'posted' : canBid ? 'bids' : 'assigned');
+  const [activeTab, setActiveTab] = useState(() => canPost ? 'posted' : canBid ? 'bids' : 'posted');
   const [tasks, setTasks]         = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState('');
@@ -48,14 +48,17 @@ const Dashboard = () => {
     postedTasks.filter((t) => t.status === 'expired'),
   [postedTasks]);
 
+  // Canonical paid statuses — escrow_held means payment received and held
+  const ACTIVE_PAYMENT_STATUSES = ['paid', 'escrow_held', 'released'];
+
   const stats = useMemo(() => ({
     posted:     postedTasks.length,
     active:     postedTasks.filter((t) => ['open','awaiting_payment','in_progress','delivered','revision_requested'].includes(t.status)).length,
     assigned:   assignedTasks.length,
     completed:  tasks.filter((t) => t.status === 'completed' && (t.postedById === user?.uid || t.assignedTo === user?.uid)).length,
-    totalSpent: postedTasks.filter((t) => ['paid','released'].includes(t.paymentStatus)).reduce((a, t) => a + Number(t.totalPaidByClient || t.amount || t.budget || 0), 0),
+    totalSpent: postedTasks.filter((t) => ACTIVE_PAYMENT_STATUSES.includes(t.paymentStatus)).reduce((a, t) => a + Number(t.clientTotalPayable || t.totalPaidByClient || t.amount || t.budget || 0), 0),
     bidsPlaced: myBids.length,
-    earnings:   assignedTasks.filter((t) => ['paid','released'].includes(t.paymentStatus)).reduce((a, t) => a + Number(t.amount || t.budget || 0), 0),
+    earnings:   assignedTasks.filter((t) => ACTIVE_PAYMENT_STATUSES.includes(t.paymentStatus)).reduce((a, t) => a + Number(t.netAmountToFreelancer || t.amount || t.budget || 0), 0),
   }), [assignedTasks, myBids.length, postedTasks, tasks, user?.uid]);
 
   // ── Role-aware stat cards ──────────────────────────────────────────────────
@@ -84,10 +87,11 @@ const Dashboard = () => {
   }, [role, stats]);
 
   // ── Role-aware tabs ────────────────────────────────────────────────────────
+  // Assigned Tasks is only meaningful for freelancers (canBid users)
   const allTabs = [
     { id: 'posted',   label: 'My Posted Tasks',  show: canPost },
     { id: 'bids',     label: 'My Bids',          show: canBid },
-    { id: 'assigned', label: 'Assigned Tasks',   show: true },
+    { id: 'assigned', label: 'Assigned Tasks',   show: canBid },
   ];
   const tabs = allTabs.filter((t) => t.show);
 
@@ -291,7 +295,7 @@ const Dashboard = () => {
                             {activeTab === 'bids' ? (
                               <div className="max-w-full rounded-full bg-base-100 px-3 py-1 text-xs font-medium text-base-content/70">
                                 {(task.selectedFreelancerId || task.assignedTo) === user?.uid
-                                  ? (task.paymentStatus === 'paid' || task.paymentStatus === 'released' ? 'Order Active' : 'Awaiting Payment')
+                                  ? (['paid','escrow_held','released'].includes(task.paymentStatus) ? 'Order Active' : 'Awaiting Payment')
                                   : 'Pending'}
                               </div>
                             ) : null}

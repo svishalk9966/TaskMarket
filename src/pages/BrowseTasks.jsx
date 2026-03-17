@@ -39,7 +39,11 @@ const BrowseTasks = () => {
     const unsubscribe = onSnapshot(collection(db, TASKS_COLLECTION_NAME), (snapshot) => {
       const nextTasks = snapshot.docs
         .map((docSnapshot) => normalizeTask({ id: docSnapshot.id, ...docSnapshot.data() }))
-        .filter((task) => task.visibility !== 'private' && !task.blocked);
+        .filter((task) =>
+          task.visibility !== 'private' &&
+          !task.blocked &&
+          (task.status === 'open' || !task.status)
+        );
 
       setTasks(sortTasksNewestFirst(nextTasks));
       setLoading(false);
@@ -181,13 +185,8 @@ const BrowseTasks = () => {
           </select>
 
           <select className="select select-bordered rounded-2xl" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="all">All statuses</option>
+            <option value="all">All open tasks</option>
             <option value="open">Open</option>
-            <option value="in_progress">In progress</option>
-            <option value="submitted">Submitted</option>
-            <option value="revision_requested">Revision requested</option>
-            <option value="completed">Completed</option>
-            <option value="closed">Closed</option>
           </select>
         </div>
       </div>

@@ -22,6 +22,11 @@ const TaskDetailModal = ({ task, onClose, onPlaceBid }) => {
   if (!task) return null;
 
   const acceptedBid = getAcceptedBid(task);
+  const { user: modalUser } = useAuth();
+  const isModalClient = Boolean(modalUser && task?.postedById && modalUser.uid === task.postedById);
+  const isModalFreelancer = Boolean(modalUser && (task?.selectedFreelancerId || task?.assignedTo) && modalUser.uid === (task.selectedFreelancerId || task.assignedTo));
+  const canViewModalSensitive = isModalClient || isModalFreelancer;
+  const isModalPaymentPaid = ['paid', 'escrow_held', 'released'].includes(String(task?.paymentStatus || '').toLowerCase());
   const paymentBaseAmount = getTaskBaseAmount(task);
   const paymentPlatformFeeAmount = getTaskPlatformFeeAmount(task);
   const paymentTotalAmount = getTaskTotalPaidByClient(task);
@@ -125,15 +130,15 @@ const TaskDetailModal = ({ task, onClose, onPlaceBid }) => {
             </div>
           </div>
 
-          {acceptedBid ? (
+          {acceptedBid && canViewModalSensitive ? (
             <div className="rounded-[1.35rem] border border-base-300 bg-base-200/35 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <div className="font-semibold">Selected freelancer</div>
                   <div className="mt-1 text-sm text-base-content/60">Work starts only after payment verification.</div>
                 </div>
-                <div className={`badge ${task.paymentStatus === 'paid' || task.paymentStatus === 'released' ? 'badge-success' : 'badge-warning'}`}>
-                  {task.paymentStatus === 'paid' || task.paymentStatus === 'released' ? 'Payment verified' : 'Awaiting payment'}
+                <div className={`badge ${isModalPaymentPaid ? 'badge-success' : 'badge-warning'}`}>
+                  {isModalPaymentPaid ? 'Payment verified' : 'Awaiting payment'}
                 </div>
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(220px,0.8fr)]">
@@ -187,11 +192,11 @@ const TaskDetailModal = ({ task, onClose, onPlaceBid }) => {
                     </button>
                   )}
                   {hasUserBid && <span className="inline-flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-info/25 bg-info/12 px-4 py-2 text-sm font-semibold text-info sm:w-auto sm:min-w-[10.5rem]">Bid Submitted</span>}
-                  {user && user.uid === task.postedById && acceptedBid && task.paymentStatus !== 'paid' && task.paymentStatus !== 'released' && (
+                  {user && user.uid === task.postedById && acceptedBid && !isModalPaymentPaid && (
                     <div className="w-full sm:w-auto sm:min-w-[10.5rem]"><PayForTaskButton task={task} /></div>
                   )}
                   {!acceptedBid && user && user.uid === task.postedById && <span className="inline-flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-base-300 bg-base-100 px-4 py-2 text-sm font-semibold text-base-content/65 sm:w-auto sm:min-w-[10.5rem]">Accept a bid to unlock payment</span>}
-                  {(task.paymentStatus === 'paid' || task.paymentStatus === 'released') && <span className="inline-flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-success/25 bg-success/12 px-4 py-2 text-sm font-semibold text-success sm:w-auto sm:min-w-[10.5rem]">Payment Verified</span>}
+                  {isModalPaymentPaid && isModalClient && <span className="inline-flex min-h-[3.25rem] w-full items-center justify-center rounded-full border border-success/25 bg-success/12 px-4 py-2 text-sm font-semibold text-success sm:w-auto sm:min-w-[10.5rem]">Payment Verified</span>}
                 </div>
               </div>
             </div>

@@ -14,11 +14,16 @@ const toMillis = (value) => {
 
 const normalizePaymentStatus = (value = '') => {
   const normalized = String(value || '').trim().toLowerCase();
-  if (['success', 'captured'].includes(normalized)) return 'paid';
+  if (['success', 'captured'].includes(normalized)) return 'escrow_held';
   if (['pending', 'created'].includes(normalized)) return 'unpaid';
-  if (['paid', 'unpaid', 'failed', 'released', 'refunded'].includes(normalized)) return normalized;
+  if (['paid', 'unpaid', 'failed', 'released', 'refunded', 'escrow_held', 'refund_pending'].includes(normalized)) return normalized;
   return 'unpaid';
 };
+
+// Shared helper — use this everywhere instead of inline array checks
+export const PAID_PAYMENT_STATUSES = ['paid', 'escrow_held', 'released'];
+export const isPaymentActive = (paymentStatus = '') =>
+  PAID_PAYMENT_STATUSES.includes(String(paymentStatus || '').trim().toLowerCase());
 
 const normalizeTaskStatus = (task = {}) => {
   const raw = String(task.status || '').trim().toLowerCase();
