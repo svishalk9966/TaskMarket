@@ -4,7 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db, formatFirestoreDate } from '../../firebase';
 import LoadingSpinner from '../../components/LoadingSpinner';
-import { approveRefundRequest, rejectRefundRequest, REFUND_FEE_PERCENT } from '../../lib/workflow';
+import { approveRefundRequest, rejectRefundRequest } from '../../lib/workflow';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency } from '../../config';
 
