@@ -22,9 +22,8 @@ const TaskDetailModal = ({ task, onClose, onPlaceBid }) => {
   if (!task) return null;
 
   const acceptedBid = getAcceptedBid(task);
-  const { user: modalUser } = useAuth();
-  const isModalClient = Boolean(modalUser && task?.postedById && modalUser.uid === task.postedById);
-  const isModalFreelancer = Boolean(modalUser && (task?.selectedFreelancerId || task?.assignedTo) && modalUser.uid === (task.selectedFreelancerId || task.assignedTo));
+  const isModalClient = Boolean(user && task?.postedById && user.uid === task.postedById);
+  const isModalFreelancer = Boolean(user && (task?.selectedFreelancerId || task?.assignedTo) && user.uid === (task.selectedFreelancerId || task.assignedTo));
   const canViewModalSensitive = isModalClient || isModalFreelancer;
   const isModalPaymentPaid = ['paid', 'escrow_held', 'released'].includes(String(task?.paymentStatus || '').toLowerCase());
   const paymentBaseAmount = getTaskBaseAmount(task);
