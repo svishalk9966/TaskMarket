@@ -9,7 +9,7 @@ import ReviewModal from '../components/ReviewModal';
 import { hasReviewed } from '../lib/reviews';
 import { db } from '../firebase';
 import { formatCurrency } from '../config';
-import { isPaymentFunded, isRefundedTask, normalizeTask, sortTasksNewestFirst, TASKS_COLLECTION_NAME } from '../lib/tasks';
+import { normalizeTask, sortTasksNewestFirst, TASKS_COLLECTION_NAME } from '../lib/tasks';
 import ReceiptModal from '../components/ReceiptModal';
 
 const Dashboard = () => {
@@ -53,13 +53,9 @@ const Dashboard = () => {
     active:     postedTasks.filter((t) => ['open','awaiting_payment','in_progress','delivered','revision_requested'].includes(t.status)).length,
     assigned:   assignedTasks.length,
     completed:  tasks.filter((t) => t.status === 'completed' && (t.postedById === user?.uid || t.assignedTo === user?.uid)).length,
-    totalSpent: postedTasks
-      .filter((t) => isPaymentFunded(t.paymentStatus))
-      .reduce((a, t) => a + Number(t.totalPaidByClient || t.clientTotalPayable || t.acceptedAmount || t.amount || t.budget || 0), 0),
+    totalSpent: postedTasks.filter((t) => ['paid','released'].includes(t.paymentStatus)).reduce((a, t) => a + Number(t.totalPaidByClient || t.amount || t.budget || 0), 0),
     bidsPlaced: myBids.length,
-    earnings:   assignedTasks
-      .filter((t) => isPaymentFunded(t.paymentStatus) && !isRefundedTask(t))
-      .reduce((a, t) => a + Number(t.netAmountToFreelancer || t.acceptedAmount || t.amount || t.budget || 0), 0),
+    earnings:   assignedTasks.filter((t) => ['paid','released'].includes(t.paymentStatus)).reduce((a, t) => a + Number(t.amount || t.budget || 0), 0),
   }), [assignedTasks, myBids.length, postedTasks, tasks, user?.uid]);
 
   // ── Role-aware stat cards ──────────────────────────────────────────────────
@@ -91,22 +87,9 @@ const Dashboard = () => {
   const allTabs = [
     { id: 'posted',   label: 'My Posted Tasks',  show: canPost },
     { id: 'bids',     label: 'My Bids',          show: canBid },
-    { id: 'assigned', label: 'Assigned Tasks',   show: canBid },
+    { id: 'assigned', label: 'Assigned Tasks',   show: true },
   ];
   const tabs = allTabs.filter((t) => t.show);
-
-  useEffect(() => {
-    const nextTabs = [
-      canPost ? 'posted' : null,
-      canBid ? 'bids' : null,
-      canBid ? 'assigned' : null,
-    ].filter(Boolean);
-
-    if (!nextTabs.includes(activeTab)) {
-      setActiveTab(nextTabs[0] || 'posted');
-    }
-  }, [activeTab, canBid, canPost]);
-
 
   // ── Role label + description for hero ─────────────────────────────────────
   const roleConfig = {
@@ -308,7 +291,7 @@ const Dashboard = () => {
                             {activeTab === 'bids' ? (
                               <div className="max-w-full rounded-full bg-base-100 px-3 py-1 text-xs font-medium text-base-content/70">
                                 {(task.selectedFreelancerId || task.assignedTo) === user?.uid
-                                  ? (isPaymentFunded(task.paymentStatus) ? 'Order Active' : 'Awaiting Payment')
+                                  ? (task.paymentStatus === 'paid' || task.paymentStatus === 'released' ? 'Order Active' : 'Awaiting Payment')
                                   : 'Pending'}
                               </div>
                             ) : null}
@@ -320,7 +303,7 @@ const Dashboard = () => {
                           </div>
                           {/* Receipt button — show when payment exists */}
                           {(() => {
-                            const hasPaid = isPaymentFunded(task.paymentStatus) || isRefundedTask(task);
+                            const hasPaid = ['escrow_held','paid','released','refunded'].includes(task.paymentStatus);
                             const isRefunded = String(task.refundStatus||'').toLowerCase() === 'refunded';
                             const isThisFreelancer = (task.selectedFreelancerId || task.assignedTo) === user?.uid;
                             const showForClient = activeTab === 'posted' && hasPaid;

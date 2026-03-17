@@ -5,7 +5,6 @@
   "rewrites": [
     { "source": "/api/razorpay/create-order", "destination": "/api/razorpay/create-order.js" },
     { "source": "/api/razorpay/verify-payment", "destination": "/api/razorpay/verify-payment.js" },
-    { "source": "/api/razorpay/refund-payment", "destination": "/api/razorpay/refund-payment.js" },
     { "source": "/api/cloudinary/delete-resource", "destination": "/api/cloudinary/delete-resource.js" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]

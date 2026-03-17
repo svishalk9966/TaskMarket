@@ -4,7 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db, formatFirestoreDate } from '../../firebase';
 import LoadingSpinner from '../../components/LoadingSpinner';
-import { approveRefundRequest, rejectRefundRequest, getRefundFeePercent } from '../../lib/workflow';
+import { approveRefundRequest, rejectRefundRequest } from '../../lib/workflow';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatCurrency } from '../../config';
 
@@ -132,7 +132,7 @@ const OwnerRefunds = () => {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-base-content sm:text-3xl">Refund Requests</h1>
-        <p className="mt-1 text-sm text-base-content/55">Review and action client refund requests. Approving runs the Razorpay refund flow, updates records, and notifies the client and freelancer.</p>
+        <p className="mt-1 text-sm text-base-content/55">Review and action client refund requests. Approving notifies the client, admin, and freelancer.</p>
       </div>
 
       {/* Stats */}
@@ -210,7 +210,7 @@ const OwnerRefunds = () => {
                       <div className="text-lg font-bold text-primary">{formatCurrency(req.refundAmount || req.amount || 0)}</div>
                       <div className="text-xs text-success">Refund to client</div>
                       {req.refundFeeAmount > 0 && (
-                        <div className="text-xs text-error">Fee: − {formatCurrency(req.refundFeeAmount)} ({req.refundFeePercent || getRefundFeePercent(req.amount || 0)}%)</div>
+                        <div className="text-xs text-error">Fee: − {formatCurrency(req.refundFeeAmount)} ({req.refundFeePercent || 0}%)</div>
                       )}
                       <div className="text-xs text-base-content/45">Paid: {formatCurrency(req.amount || 0)}</div>
                     </div>

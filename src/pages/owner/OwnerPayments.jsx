@@ -7,6 +7,7 @@ import {
   getDisputeCounts,
   getOwnerPaymentCounts,
   getPaymentPresentation,
+  markRefundForPayment,
   releasePayoutForPayment,
 } from '../../lib/marketplace';
 
@@ -105,6 +106,16 @@ const OwnerPayments = () => {
     }
   };
 
+  const handleRefund = async (payment, mode = 'refunded') => {
+    const confirmed = window.confirm(mode === 'partial_refund' ? 'Mark this payment as partially refunded?' : 'Mark this payment as refunded?');
+    if (!confirmed) return;
+    setBusyAction(`${mode}-${payment.id}`);
+    try {
+      await markRefundForPayment(payment, mode);
+    } finally {
+      setBusyAction('');
+    }
+  };
 
   if (loading) return <LoadingSpinner label="Loading payment records..." />;
 
@@ -121,7 +132,7 @@ const OwnerPayments = () => {
         <div className="mb-6 flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold">Payment Management</h1>
-            <p className="text-base-content/60 mt-2">Review escrow-held orders, payout readiness, and dispute-linked payments. Real refunds are processed from the Refund Requests page.</p>
+            <p className="text-base-content/60 mt-2">Review escrow-held orders, payout readiness, refunds, and dispute-linked payments.</p>
           </div>
           <div className="flex flex-col sm:flex-row gap-3">
             <input className="input input-bordered w-full sm:w-auto" placeholder="Search by email, task ID, payment ID" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -160,8 +171,9 @@ const OwnerPayments = () => {
                     <td><span className={`badge ${hasOpenDispute ? 'badge-warning' : 'badge-outline'}`}>{payment.disputeStatus}</span></td>
                     <td>
                       <div className="flex flex-wrap gap-2">
-                        <button className="btn btn-xs btn-success" disabled={!canRelease || busyAction === `release-${payment.id}`} onClick={() => handleRelease(payment)}>{busyAction === `release-${payment.id}` ? 'Releasing...' : 'Release workflow state'}</button>
-                        <span className="badge badge-outline">Refunds handled in Refund Requests</span>
+                        <button className="btn btn-xs btn-success" disabled={!canRelease || busyAction === `release-${payment.id}`} onClick={() => handleRelease(payment)}>{busyAction === `release-${payment.id}` ? 'Releasing...' : 'Release'}</button>
+                        <button className="btn btn-xs btn-error" disabled={busyAction === `refunded-${payment.id}`} onClick={() => handleRefund(payment, 'refunded')}>{busyAction === `refunded-${payment.id}` ? 'Saving...' : 'Refund'}</button>
+                        <button className="btn btn-xs btn-outline" disabled={busyAction === `partial_refund-${payment.id}`} onClick={() => handleRefund(payment, 'partial_refund')}>Partial</button>
                       </div>
                     </td>
                     <td>{formatFirestoreDate(payment.paymentDate)}</td>
@@ -206,8 +218,9 @@ const OwnerPayments = () => {
                   <span className={`badge ${hasOpenDispute ? 'badge-warning' : 'badge-outline'}`}>Dispute: {payment.disputeStatus}</span>
                 </div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  <button className="btn btn-sm btn-success" disabled={!canRelease || busyAction === `release-${payment.id}`} onClick={() => handleRelease(payment)}>{busyAction === `release-${payment.id}` ? 'Releasing...' : 'Release workflow state'}</button>
-                  <div className="sm:col-span-2 text-xs text-base-content/55">Refunds are processed only from the Refund Requests page so gateway refunds are always tracked server-side.</div>
+                  <button className="btn btn-sm btn-success" disabled={!canRelease || busyAction === `release-${payment.id}`} onClick={() => handleRelease(payment)}>{busyAction === `release-${payment.id}` ? 'Releasing...' : 'Release Payout'}</button>
+                  <button className="btn btn-sm btn-error" disabled={busyAction === `refunded-${payment.id}`} onClick={() => handleRefund(payment, 'refunded')}>{busyAction === `refunded-${payment.id}` ? 'Saving...' : 'Refund'}</button>
+                  <button className="btn btn-sm btn-outline" disabled={busyAction === `partial_refund-${payment.id}`} onClick={() => handleRefund(payment, 'partial_refund')}>Partial Refund</button>
                 </div>
                 <div className="text-sm text-base-content/60">Date: {formatFirestoreDate(payment.paymentDate)}</div>
               </div>

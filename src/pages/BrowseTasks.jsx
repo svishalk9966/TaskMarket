@@ -5,7 +5,7 @@ import TaskCard from '../components/TaskCard';
 import TaskDetailModal from '../components/TaskDetailModal';
 import TaskDetailPanel from '../components/TaskDetailPanel';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { DEFAULT_TASK_STATUS, isMarketplaceVisibleTask, normalizeTask, sortTasksNewestFirst, TASKS_COLLECTION_NAME } from '../lib/tasks';
+import { DEFAULT_TASK_STATUS, DEFAULT_TASK_VISIBILITY, normalizeTask, sortTasksNewestFirst, TASKS_COLLECTION_NAME } from '../lib/tasks';
 import { createNotification } from '../lib/workflow';
 
 const budgetRanges = [
@@ -39,7 +39,7 @@ const BrowseTasks = () => {
     const unsubscribe = onSnapshot(collection(db, TASKS_COLLECTION_NAME), (snapshot) => {
       const nextTasks = snapshot.docs
         .map((docSnapshot) => normalizeTask({ id: docSnapshot.id, ...docSnapshot.data() }))
-        .filter((task) => isMarketplaceVisibleTask(task));
+        .filter((task) => task.visibility !== 'private' && !task.blocked);
 
       setTasks(sortTasksNewestFirst(nextTasks));
       setLoading(false);
@@ -85,12 +85,14 @@ const BrowseTasks = () => {
 
     const nextTasks = tasks.filter((task) => {
       const effectiveStatus = task.status || DEFAULT_TASK_STATUS;
+      const effectiveVisibility = task.visibility || DEFAULT_TASK_VISIBILITY;
       const matchesStatus = statusFilter === 'all' || effectiveStatus === statusFilter;
       const matchesCategory = categoryFilter === 'all' || (task.category || '').toLowerCase() === categoryFilter.toLowerCase();
+      const matchesVisibility = effectiveVisibility !== 'private';
       const matchesBudget = matchesBudgetRange(task.budget, budgetFilter);
       const searchableText = task.searchText || `${task.title || ''} ${task.description || ''} ${task.category || ''} ${task.location || ''} ${(task.skills || []).join(' ')} ${task.postedByName || ''}`.toLowerCase();
       const matchesSearch = !queryText || searchableText.includes(queryText);
-      return isMarketplaceVisibleTask(task) && matchesStatus && matchesCategory && matchesSearch && matchesBudget;
+      return matchesStatus && matchesCategory && matchesVisibility && matchesSearch && matchesBudget;
     });
 
     return [...nextTasks].sort((left, right) => {
@@ -130,7 +132,7 @@ const BrowseTasks = () => {
         <div className="max-w-3xl">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary/80">Marketplace browser</p>
           <h2 className="mt-2 text-2xl font-bold sm:text-3xl">Browse Tasks</h2>
-          <p className="mt-2 text-base-content/60">Explore open projects in a faster list-detail workspace. Only publicly available tasks that can still receive bids are shown here.</p>
+          <p className="mt-2 text-base-content/60">Explore open projects in a faster list-detail workspace. Review task cards on the left and compare full details on the right.</p>
         </div>
         <div className="flex flex-wrap gap-3 text-sm">
           <div className="rounded-2xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm">
@@ -179,8 +181,13 @@ const BrowseTasks = () => {
           </select>
 
           <select className="select select-bordered rounded-2xl" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="all">Open tasks</option>
+            <option value="all">All statuses</option>
             <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="submitted">Submitted</option>
+            <option value="revision_requested">Revision requested</option>
+            <option value="completed">Completed</option>
+            <option value="closed">Closed</option>
           </select>
         </div>
       </div>

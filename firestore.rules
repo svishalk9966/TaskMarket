@@ -65,6 +65,19 @@ service cloud.firestore {
       allow update, delete: if isOwner();
     }
 
+
+    match /refundRequests/{requestId} {
+      allow create: if signedIn()
+        && request.resource.data.clientId == request.auth.uid
+        && taskDoc(request.resource.data.taskId).exists()
+        && taskDoc(request.resource.data.taskId).data.postedById == request.auth.uid;
+      allow read: if isOwner() || (signedIn() && (
+        resource.data.clientId == request.auth.uid
+        || resource.data.freelancerId == request.auth.uid
+      ));
+      allow update, delete: if isOwner();
+    }
+
     match /notifications/{notificationId} {
       allow create: if signedIn();
       allow read, update: if isOwner() || (signedIn() && resource.data.userId == request.auth.uid);

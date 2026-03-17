@@ -1,8 +1,7 @@
 import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
-import { isPaymentFunded, normalizePaymentStatus } from './tasks';
 
-const normalizeStatus = (value = '') => String(value || '').toLowerCase();
+const normalizeStatus = (value = '') => value.toLowerCase();
 
 export const fetchOwnerDashboardData = async () => {
   const [usersSnap, tasksSnap, paymentsSnap, deliveriesSnap, workspaceSnap, disputesSnap] = await Promise.all([
@@ -21,7 +20,7 @@ export const fetchOwnerDashboardData = async () => {
   const workspaceEntries = workspaceSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
   const disputes = disputesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
-  const successfulPayments = payments.filter((payment) => isPaymentFunded(payment.paymentStatus || payment.status));
+  const successfulPayments = payments.filter((payment) => ['success', 'captured', 'paid'].includes(normalizeStatus(payment.paymentStatus || payment.status)));
   const totalPlatformEarnings = successfulPayments.reduce((sum, payment) => sum + Number(payment.totalPlatformRevenue ?? payment.platformFee ?? 0), 0);
 
   return {

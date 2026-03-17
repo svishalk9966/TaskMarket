@@ -10,7 +10,6 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getTaskFeeBreakdown } from './feeModel';
-import { isPaymentFunded, normalizePaymentStatus, normalizeRefundStatus } from './tasks';
 
 export const DISPUTES_COLLECTION = 'disputes';
 
@@ -22,7 +21,12 @@ const toNumber = (value) => {
 
 export const PAYMENT_ACTIVE_STATUSES = ['paid', 'escrow_held', 'released'];
 
-export const normalizePaymentState = (value = '') => normalizePaymentStatus(value);
+export const normalizePaymentState = (value = '') => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (PAYMENT_ACTIVE_STATUSES.includes(normalized)) return normalized;
+  if (['pending', 'failed', 'refunded', 'refund_pending', 'disputed', 'unpaid'].includes(normalized)) return normalized;
+  return 'pending';
+};
 
 export const normalizeDisputeState = (value = '') => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -49,7 +53,7 @@ export const getPaymentPresentation = (payment = {}) => {
     paymentStatus: normalizePaymentState(payment.paymentStatus || payment.status),
     escrowStatus: String(payment.escrowStatus || (normalizePaymentState(payment.paymentStatus || payment.status) === 'escrow_held' ? 'held' : 'not_funded')).toLowerCase(),
     payoutStatus: String(payment.payoutStatus || 'pending').toLowerCase(),
-    refundStatus: normalizeRefundStatus(payment.refundStatus || 'none'),
+    refundStatus: String(payment.refundStatus || 'none').toLowerCase(),
     disputeStatus: normalizeDisputeState(payment.disputeStatus || ''),
     gatewayFee: toNumber(payment.gatewayFee),
     displayAcceptedAmount: toNumber(payment.acceptedAmount ?? payment.acceptedBidAmount ?? payment.grossAmount ?? payment.amount) ?? breakdown.acceptedAmount,

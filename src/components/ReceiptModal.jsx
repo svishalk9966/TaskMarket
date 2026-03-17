@@ -1,8 +1,6 @@
 import React, { useRef } from 'react';
 import { formatCurrency, APP_NAME } from '../config';
 import { formatFirestoreDate } from '../firebase';
-import { calculateRefundBreakdown } from '../lib/workflow';
-import { isPaymentFunded, isRefundedTask } from '../lib/tasks';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const formatTs = (ts) => {
@@ -59,10 +57,9 @@ const PaymentReceipt = ({ task }) => {
 // ── Refund Receipt (Client) ────────────────────────────────────────────────────
 const RefundReceipt = ({ task }) => {
   const gross       = task.clientTotalPayable || task.totalPaidByClient || task.acceptedAmount || task.amount || 0;
-  const breakdown   = calculateRefundBreakdown(gross);
-  const feePercent  = task.refundFeePercent || breakdown.feePercent;
-  const feeAmt      = task.refundFeeAmount || breakdown.feeAmount;
-  const refundAmt   = task.refundNetAmount || task.refundAmount || breakdown.refundAmount;
+  const feePercent  = task.refundFeePercent || 10;
+  const feeAmt      = task.refundFeeAmount || Math.round(gross * feePercent / 100);
+  const refundAmt   = task.refundNetAmount || (gross - feeAmt);
   const approvedOn  = task.refundApprovedAt || task.updatedAt;
 
   return (
@@ -106,7 +103,7 @@ const AssignmentReceipt = ({ task, userId }) => {
   const feePercent     = task.freelancerFeePercent || task.platformFeePercent || 0;
   const netEarnings    = task.netAmountToFreelancer || (baseAmt - freelancerFee);
   const assignedOn     = task.acceptedAt || task.updatedAt;
-  const paymentPaid    = isPaymentFunded(task.paymentStatus);
+  const paymentPaid    = ['escrow_held', 'paid', 'released'].includes(task.paymentStatus);
 
   return (
     <div className="space-y-1">
@@ -189,8 +186,8 @@ const ReceiptModal = ({ task, userRole, onClose }) => {
   const printRef = useRef(null);
 
   // Determine which receipts to show
-  const isRefunded = isRefundedTask(task);
-  const isPaymentPaid = isPaymentFunded(task.paymentStatus) || isRefunded;
+  const isRefunded = String(task.refundStatus || '').toLowerCase() === 'refunded';
+  const isPaymentPaid = ['escrow_held', 'paid', 'released', 'refunded'].includes(String(task.paymentStatus || '').toLowerCase());
   const isAssigned = Boolean(task.selectedFreelancerId || task.assignedTo);
 
   // Tabs

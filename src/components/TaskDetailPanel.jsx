@@ -5,7 +5,6 @@ import PayForTaskButton from './PayForTaskButton';
 import PublicUserIdentity from './PublicUserIdentity';
 import { getAcceptedBid, getTaskBaseAmount, getTaskPlatformFeeAmount, getTaskTotalPaidByClient } from '../lib/workflow';
 import { formatCurrency, MAX_BID_MESSAGE_LENGTH } from '../config';
-import { canViewSensitiveTaskData, isPaymentFunded } from '../lib/tasks';
 
 const deliveryTimeOptions = ['1 day', '3 days', '5 days', '7 days', 'Flexible'];
 
@@ -33,7 +32,6 @@ const TaskDetailPanel = ({ task, onPlaceBid, className = '' }) => {
   const [successMessage, setSuccessMessage] = useState('');
 
   const hasUserBid = useMemo(() => Boolean(user && task?.bids?.some((bid) => bid.freelancerId === user.uid)), [task?.bids, user]);
-  const canViewSensitive = useMemo(() => canViewSensitiveTaskData(task, user), [task, user]);
 
   if (!task) {
     return (
@@ -182,23 +180,23 @@ const TaskDetailPanel = ({ task, onPlaceBid, className = '' }) => {
                     </button>
                   ) : null}
                   {hasUserBid ? <span className="inline-flex min-h-[3.5rem] w-full items-center justify-center rounded-full border border-info/25 bg-info/12 px-4 py-3 text-sm font-semibold text-info sm:w-auto sm:min-w-[11rem]">✓ Bid Submitted</span> : null}
-                  {user && user.uid === task.postedById && acceptedBid && !isPaymentFunded(task.paymentStatus) ? <div className="w-full sm:w-auto sm:min-w-[11rem]"><PayForTaskButton task={task} /></div> : null}
+                  {user && user.uid === task.postedById && acceptedBid && task.paymentStatus !== 'paid' && task.paymentStatus !== 'released' ? <div className="w-full sm:w-auto sm:min-w-[11rem]"><PayForTaskButton task={task} /></div> : null}
                   {!acceptedBid && user && user.uid === task.postedById ? <span className="inline-flex min-h-[3.5rem] w-full items-center justify-center rounded-full border border-base-300 bg-base-100 px-4 py-3 text-sm font-semibold text-base-content/65 sm:w-auto sm:min-w-[12rem]">Accept a bid to unlock payment</span> : null}
-                  {isPaymentFunded(task.paymentStatus) ? <span className="inline-flex min-h-[3.5rem] w-full items-center justify-center rounded-full border border-success/25 bg-success/12 px-4 py-3 text-sm font-semibold text-success sm:w-auto sm:min-w-[11rem]">Payment Verified</span> : null}
+                  {task.paymentStatus === 'paid' || task.paymentStatus === 'released' ? <span className="inline-flex min-h-[3.5rem] w-full items-center justify-center rounded-full border border-success/25 bg-success/12 px-4 py-3 text-sm font-semibold text-success sm:w-auto sm:min-w-[11rem]">Payment Verified</span> : null}
                 </div>
               </div>
             </div>
           </div>
 
-          {acceptedBid && canViewSensitive ? (
+          {acceptedBid ? (
             <div className="rounded-[1.6rem] border border-base-300 bg-base-100 p-5 shadow-[0_12px_30px_rgba(15,23,42,0.06)] sm:p-6">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <h4 className="text-lg font-semibold">Selected freelancer</h4>
                   <p className="mt-1 text-sm text-base-content/60">Work starts only after payment verification.</p>
                 </div>
-                <div className={"badge " + (isPaymentFunded(task.paymentStatus) ? 'badge-success' : 'badge-warning')}>
-                  {isPaymentFunded(task.paymentStatus) ? 'Payment verified' : 'Awaiting payment'}
+                <div className={"badge " + ((task.paymentStatus === 'paid' || task.paymentStatus === 'released') ? 'badge-success' : 'badge-warning')}>
+                  {task.paymentStatus === 'paid' || task.paymentStatus === 'released' ? 'Payment verified' : 'Awaiting payment'}
                 </div>
               </div>
               <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]">
@@ -218,15 +216,10 @@ const TaskDetailPanel = ({ task, onPlaceBid, className = '' }) => {
                 </div>
                 <div className="rounded-[1.35rem] border border-base-300 bg-base-200/35 p-4 text-sm">
                   <div className="flex items-center justify-between gap-3"><span className="text-base-content/60">Accepted amount</span><span className="font-semibold">{formatCurrency(paymentBaseAmount)}</span></div>
-                  <div className="mt-2 flex items-center justify-between gap-3"><span className="text-base-content/60">Platform fee</span><span className="font-semibold">{formatCurrency(paymentPlatformFeeAmount)}</span></div>
+                  <div className="mt-2 flex items-center justify-between gap-3"><span className="text-base-content/60">Platform fee (5%)</span><span className="font-semibold">{formatCurrency(paymentPlatformFeeAmount)}</span></div>
                   <div className="mt-2 flex items-center justify-between gap-3 border-t border-base-300 pt-2"><span className="font-medium">Total payable</span><span className="font-bold text-primary">{formatCurrency(paymentTotalAmount)}</span></div>
                 </div>
               </div>
-            </div>
-          ) : acceptedBid ? (
-            <div className="rounded-[1.6rem] border border-base-300 bg-base-100 p-5 shadow-[0_12px_30px_rgba(15,23,42,0.06)] sm:p-6">
-              <h4 className="text-lg font-semibold">Assignment details are private</h4>
-              <p className="mt-1 text-sm text-base-content/60">Accepted freelancer details, pricing breakdown, and workflow payment data are visible only to the client, assigned freelancer, and admin.</p>
             </div>
           ) : null}
 
@@ -330,7 +323,7 @@ const TaskDetailPanel = ({ task, onPlaceBid, className = '' }) => {
             </form>
           ) : null}
 
-          {task.bids?.length > 0 && canViewSensitive ? (
+          {task.bids?.length > 0 ? (
             <div className="rounded-[1.6rem] border border-base-300 bg-base-100 p-5 shadow-[0_12px_30px_rgba(15,23,42,0.06)] sm:p-6">
               <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>

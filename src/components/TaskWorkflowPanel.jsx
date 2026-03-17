@@ -18,12 +18,11 @@ import {
   deleteTaskByClient,
   repostExpiredTask,
   calculateRefundBreakdown,
-  getRefundFeePercent,
+  REFUND_FEE_PERCENT,
 } from '../lib/workflow';
 import { formatFirestoreDate } from '../firebase';
 import PublicUserIdentity from './PublicUserIdentity';
 import PayForTaskButton from './PayForTaskButton';
-import { isPaymentFunded } from '../lib/tasks';
 
 const emptyProgress = { preview: 0, attachment: 0 };
 
@@ -64,7 +63,7 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
   const acceptedBid = useMemo(() => getAcceptedBid(task), [task]);
   const isClient = task.postedById === user?.uid;
   const isSelectedFreelancer = (task.selectedFreelancerId || task.assignedTo) === user?.uid;
-  const isPaymentPaid = isPaymentFunded(task.paymentStatus);
+  const isPaymentPaid = ['paid', 'escrow_held', 'released'].includes(task.paymentStatus);
   const canSubmitDelivery = mode === 'assigned' && isSelectedFreelancer && isPaymentPaid && ['in_progress', 'revision_requested'].includes(task.status);
   const canReviewDelivery = mode === 'client' && isClient && ['delivered', 'revision_requested'].includes(task.status);
   const canAddWorkspaceUpdate = mode !== 'readonly' && (isClient || isSelectedFreelancer);
@@ -75,7 +74,7 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
   const freelancerFeeAmount = Math.max(0, Math.round(Number(task.freelancerFeeAmount ?? (baseAmount * (platformFeePercent / 100))) || 0));
   const netAmountToFreelancer = Math.max(0, Math.round(Number(task.netAmountToFreelancer ?? (baseAmount - freelancerFeeAmount)) || 0));
   const showFreelancerNetSummary = isSelectedFreelancer && !isClient;
-  const canRequestRefund = isClient && isPaymentFunded(task.paymentStatus) && !['refund_pending', 'refunded', 'partial_refund'].includes(String(task.refundStatus || '').toLowerCase()) && ['in_progress', 'awaiting_payment', 'delivered', 'revision_requested'].includes(task.status);
+  const canRequestRefund = isClient && ['escrow_held', 'paid'].includes(task.paymentStatus) && !['refund_pending', 'refunded'].includes(String(task.refundStatus || '').toLowerCase()) && ['in_progress', 'awaiting_payment', 'delivered', 'revision_requested'].includes(task.status);
   const refundIsPending = String(task.refundStatus || '').toLowerCase() === 'refund_pending';
   const refundIsDone = String(task.refundStatus || '').toLowerCase() === 'refunded';
   const canDeleteTask = isClient && ['open', 'expired'].includes(task.status);
