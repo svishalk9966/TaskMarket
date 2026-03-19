@@ -15,7 +15,6 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import ForgotPassword from './pages/ForgotPassword';
 import Profile from './pages/Profile';
-import Earnings from './pages/Earnings';
 import PublicProfile from './pages/PublicProfile';
 import OwnerLogin from './pages/owner/OwnerLogin';
 import OwnerDashboard from './pages/owner/OwnerDashboard';
@@ -96,7 +95,6 @@ const AppContent = () => {
           <Route path="/role-select" element={<RoleSelectPage />} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-          <Route path="/earnings" element={<ProtectedRoute><Earnings /></ProtectedRoute>} />
           <Route path="/profile/:userId" element={<PublicProfile />} />
           <Route path="/users/:userId" element={<PublicProfile />} />
           <Route path="/post" element={<ProtectedRoute><PostTask /></ProtectedRoute>} />

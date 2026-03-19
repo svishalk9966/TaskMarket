@@ -33,6 +33,20 @@ export const PAYOUT_STATUSES = {
 const roundCurrency = (value) => Math.max(0, Math.round(Number(value || 0)));
 const sanitizeText = (value = '', maxLength = 120) => String(value || '').trim().slice(0, maxLength);
 const normalizePayoutMethod = (value = '') => (String(value || '').trim().toLowerCase() === 'bank_account' ? 'bank_account' : 'upi');
+
+const getComparableTimestamp = (value) => {
+  if (!value) return 0;
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value?.seconds === 'number') return (value.seconds * 1000) + Math.floor(Number(value.nanoseconds || 0) / 1000000);
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const sortPayoutRequestsNewestFirst = (items = []) => [...items].sort((a, b) => {
+  const bTime = getComparableTimestamp(b?.createdAt || b?.submittedAt || b?.processedAt || b?.approvedAt || b?.paidAt);
+  const aTime = getComparableTimestamp(a?.createdAt || a?.submittedAt || a?.processedAt || a?.approvedAt || a?.paidAt);
+  return bTime - aTime;
+});
 const createNotification = async ({ userId, title, message, type = 'info', taskId = '', metadata = {} }) => {
   if (!userId) return;
   await addDoc(collection(db, NOTIFICATIONS_COLLECTION), {
@@ -150,10 +164,10 @@ const getOwnerNotificationUserIds = async () => {
 
 export const subscribeToTaskPayoutRequest = (taskId, callback, onError) => {
   if (!taskId) return () => {};
-  const payoutQuery = query(collection(db, PAYOUT_REQUESTS_COLLECTION), where('taskId', '==', taskId), orderBy('createdAt', 'desc'));
+  const payoutQuery = query(collection(db, PAYOUT_REQUESTS_COLLECTION), where('taskId', '==', taskId));
   return onSnapshot(payoutQuery, (snapshot) => {
-    const first = snapshot.docs[0];
-    callback(first ? { id: first.id, ...first.data() } : null);
+    const items = sortPayoutRequestsNewestFirst(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() })));
+    callback(items[0] || null);
   }, onError);
 };
 
@@ -169,10 +183,9 @@ export const subscribeToFreelancerPayoutRequests = (freelancerId, callback, onEr
   const payoutQuery = query(
     collection(db, PAYOUT_REQUESTS_COLLECTION),
     where('freelancerId', '==', freelancerId),
-    orderBy('createdAt', 'desc'),
   );
   return onSnapshot(payoutQuery, (snapshot) => {
-    callback(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() })));
+    callback(sortPayoutRequestsNewestFirst(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }))));
   }, onError);
 };
 
