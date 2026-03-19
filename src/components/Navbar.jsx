@@ -262,7 +262,7 @@ const ChangeEmailModal = ({ user, isOwner, onClose, onSuccessClose }) => {
 // ── Main Navbar ───────────────────────────────────────────────────────────────
 const Navbar = () => {
   const { user, logout, isOwner } = useAuth();
-  const { role, canPost, clearRole } = useRole();
+  const { role, canPost, canBid, clearRole } = useRole();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
