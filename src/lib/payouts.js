@@ -189,6 +189,89 @@ export const subscribeToFreelancerPayoutRequests = (freelancerId, callback, onEr
   }, onError);
 };
 
+const mapPaymentToFreelancerHistoryItem = (payment = {}) => {
+  const normalizedPaymentStatus = String(payment.paymentStatus || '').toLowerCase();
+  const normalizedPayoutStatus = String(payment.payoutStatus || '').toLowerCase();
+  const derivedStatus = normalizedPayoutStatus === PAYOUT_STATUSES.PAID
+    ? PAYOUT_STATUSES.PAID
+    : Object.values(PAYOUT_STATUSES).includes(normalizedPayoutStatus)
+      ? normalizedPayoutStatus
+      : ['escrow_held', 'released', 'paid'].includes(normalizedPaymentStatus)
+        ? PAYOUT_STATUSES.DETAILS_PENDING
+        : normalizedPayoutStatus || normalizedPaymentStatus || PAYOUT_STATUSES.DETAILS_PENDING;
+
+  return {
+    id: `payment_${payment.id}`,
+    sourceId: payment.id,
+    sourceType: 'payment',
+    taskId: payment.taskId || '',
+    taskTitle: payment.taskTitle || '',
+    clientId: payment.clientId || payment.userId || '',
+    clientName: payment.clientName || payment.clientEmail || payment.userEmail || '',
+    freelancerId: payment.freelancerId || '',
+    freelancerEmail: payment.freelancerEmail || '',
+    paymentId: payment.paymentId || payment.transactionId || '',
+    paymentOrderId: payment.paymentOrderId || payment.orderId || '',
+    amount: roundCurrency(payment.netAmountToFreelancer || payment.amount || payment.acceptedAmount || payment.acceptedBidAmount || 0),
+    acceptedAmount: roundCurrency(payment.acceptedAmount || payment.acceptedBidAmount || payment.amount || 0),
+    clientPlatformFeeAmount: roundCurrency(payment.clientPlatformFeeAmount || payment.platformFeeAmount || payment.platformFee || 0),
+    freelancerFeeAmount: roundCurrency(payment.freelancerFeeAmount || 0),
+    totalPlatformRevenue: roundCurrency(payment.totalPlatformRevenue || payment.platformFeeAmount || payment.platformFee || 0),
+    payoutMethod: payment.payoutMethod || '',
+    provider: payment.provider || payment.paymentMethod || 'Razorpay',
+    status: derivedStatus,
+    submittedAt: payment.paymentDate || payment.createdAt || null,
+    createdAt: payment.createdAt || payment.paymentDate || null,
+    approvedAt: normalizedPayoutStatus === PAYOUT_STATUSES.PAID ? (payment.updatedAt || payment.paymentDate || null) : null,
+    processedAt: normalizedPayoutStatus === PAYOUT_STATUSES.PAID ? (payment.updatedAt || payment.paymentDate || null) : null,
+    paidAt: normalizedPayoutStatus === PAYOUT_STATUSES.PAID ? (payment.updatedAt || payment.paymentDate || null) : null,
+    payoutDetailsMasked: payment.payoutDetailsMasked || null,
+    payoutDetails: payment.payoutDetails || null,
+    timelineLabel: ['escrow_held', 'released', 'paid'].includes(normalizedPaymentStatus) ? 'Payment received' : 'Payment created',
+    historyNote: normalizedPayoutStatus === PAYOUT_STATUSES.PAID
+      ? 'Payout recorded from payment history.'
+      : 'Payment received. Payout details or final processing may still be pending.',
+    isFallbackHistory: true,
+  };
+};
+
+export const subscribeToFreelancerTransactionHistory = (freelancerId, callback, onError) => {
+  if (!freelancerId) return () => {};
+
+  let payoutItems = [];
+  let paymentItems = [];
+
+  const emitMerged = () => {
+    const payoutTaskIds = new Set(payoutItems.map((item) => String(item.taskId || '').trim()).filter(Boolean));
+    const paymentFallbackItems = paymentItems.filter((item) => {
+      const taskId = String(item.taskId || '').trim();
+      return !taskId || !payoutTaskIds.has(taskId);
+    });
+    callback(sortPayoutRequestsNewestFirst([...payoutItems, ...paymentFallbackItems]));
+  };
+
+  const payoutQuery = query(collection(db, PAYOUT_REQUESTS_COLLECTION), where('freelancerId', '==', freelancerId));
+  const paymentsQuery = query(collection(db, 'payments'), where('freelancerId', '==', freelancerId));
+
+  const unsubscribePayouts = onSnapshot(payoutQuery, (snapshot) => {
+    payoutItems = snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data(), sourceType: 'payout_request' }));
+    emitMerged();
+  }, onError);
+
+  const unsubscribePayments = onSnapshot(paymentsQuery, (snapshot) => {
+    paymentItems = snapshot.docs
+      .map((entry) => mapPaymentToFreelancerHistoryItem({ id: entry.id, ...entry.data() }))
+      .filter((item) => Number(item.amount || 0) > 0)
+      .filter((item) => ['details_pending', 'details_submitted', 'under_review', 'approved', 'processing', 'paid'].includes(String(item.status || '').toLowerCase()));
+    emitMerged();
+  }, onError);
+
+  return () => {
+    unsubscribePayouts();
+    unsubscribePayments();
+  };
+};
+
 export const getMaskedPayoutDestinationSummary = (payoutRequest = {}) => sanitizeText(
   payoutRequest?.payoutDetailsMasked?.summary
     || payoutRequest?.payoutDetailsMasked?.upiIdMasked
@@ -334,35 +417,7 @@ export const rejectPayoutRequest = async ({ payoutRequest, ownerUser, reason = '
   });
 };
 
-const sanitizeTransferMeta = (details = {}) => {
-  const paymentMethodType = sanitizeText(details.paymentMethodType, 40);
-  const paymentProvider = sanitizeText(details.paymentProvider, 60);
-  const transactionIdRaw = String(details.transactionId || '').trim();
-  const payerDisplayName = sanitizeText(details.payerDisplayName, 80);
-  const optionalNote = sanitizeText(details.optionalNote, 180);
-
-  if (!paymentMethodType) throw new Error('Payment method type is required.');
-  if (!paymentProvider) throw new Error('Payment provider is required.');
-  if (!transactionIdRaw) throw new Error('Transaction ID is required.');
-  if (!payerDisplayName) throw new Error('Payer display name is required.');
-
-  const transactionId = transactionIdRaw.replace(/\s+/g, ' ').slice(0, 120);
-  const visibleTail = transactionId.slice(-4);
-  const maskedTransactionId = transactionId.length <= 4
-    ? '*'.repeat(transactionId.length || 4)
-    : `${'*'.repeat(Math.max(4, transactionId.length - 4))}${visibleTail}`;
-
-  return {
-    paymentMethodType,
-    paymentProvider,
-    transactionId,
-    maskedTransactionId,
-    payerDisplayName,
-    optionalNote,
-  };
-};
-
-export const approveAndProcessPayout = async ({ payoutRequest, ownerUser, transferDetails }) => {
+export const approveAndProcessPayout = async ({ payoutRequest, ownerUser }) => {
   if (!payoutRequest?.id || !payoutRequest?.taskId) throw new Error('Payout request is missing.');
 
   const payoutAmount = roundCurrency(payoutRequest.amount);
@@ -373,7 +428,6 @@ export const approveAndProcessPayout = async ({ payoutRequest, ownerUser, transf
     120,
   );
   const destinationLabel = payoutMethod === 'bank_account' ? 'bank details' : 'UPI details';
-  const cleanTransferDetails = sanitizeTransferMeta(transferDetails);
 
   await updateDoc(doc(db, PAYOUT_REQUESTS_COLLECTION, payoutRequest.id), {
     status: PAYOUT_STATUSES.PAID,
@@ -385,20 +439,6 @@ export const approveAndProcessPayout = async ({ payoutRequest, ownerUser, transf
     paidAt: serverTimestamp(),
     failureReason: '',
     rejectionReason: '',
-    transferDetails: {
-      paymentMethodType: cleanTransferDetails.paymentMethodType,
-      paymentProvider: cleanTransferDetails.paymentProvider,
-      transactionId: cleanTransferDetails.transactionId,
-      payerDisplayName: cleanTransferDetails.payerDisplayName,
-      optionalNote: cleanTransferDetails.optionalNote,
-    },
-    transferDetailsMasked: {
-      paymentMethodType: cleanTransferDetails.paymentMethodType,
-      paymentProvider: cleanTransferDetails.paymentProvider,
-      transactionId: cleanTransferDetails.maskedTransactionId,
-      payerDisplayName: cleanTransferDetails.payerDisplayName,
-      optionalNote: cleanTransferDetails.optionalNote,
-    },
     updatedAt: serverTimestamp(),
   });
 
@@ -433,12 +473,6 @@ export const approveAndProcessPayout = async ({ payoutRequest, ownerUser, transf
       payoutMethod,
       payoutDestination,
       paidAt: paidAtIso,
-      transferDetails: {
-        paymentMethodType: cleanTransferDetails.paymentMethodType,
-        paymentProvider: cleanTransferDetails.paymentProvider,
-        transactionId: cleanTransferDetails.maskedTransactionId,
-        payerDisplayName: cleanTransferDetails.payerDisplayName,
-      },
     },
   });
 

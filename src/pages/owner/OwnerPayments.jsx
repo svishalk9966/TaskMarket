@@ -55,7 +55,6 @@ const OwnerPayments = () => {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState('');
-  const [transferForms, setTransferForms] = useState({});
 
   useEffect(() => {
     let latestPayments = [];
@@ -134,37 +133,6 @@ const OwnerPayments = () => {
       .some((value) => String(value || '').toLowerCase().includes(queryTerm));
   }), [payoutRequests, search]);
 
-  const getTransferForm = (request) => {
-    const saved = request.transferDetails || {};
-    return transferForms[request.id] || {
-      paymentMethodType: saved.paymentMethodType || '',
-      paymentProvider: saved.paymentProvider || '',
-      transactionId: saved.transactionId || '',
-      payerDisplayName: saved.payerDisplayName || '',
-      optionalNote: saved.optionalNote || '',
-    };
-  };
-
-  const updateTransferForm = (requestId, field, value) => {
-    setTransferForms((prev) => ({
-      ...prev,
-      [requestId]: {
-        ...(prev[requestId] || {}),
-        [field]: value,
-      },
-    }));
-  };
-
-  const hasCompleteTransferForm = (request) => {
-    const form = getTransferForm(request);
-    return Boolean(
-      String(form.paymentMethodType || '').trim()
-      && String(form.paymentProvider || '').trim()
-      && String(form.transactionId || '').trim()
-      && String(form.payerDisplayName || '').trim()
-    );
-  };
-
   const handleRefund = async (payment, mode = 'refunded') => {
     const confirmed = window.confirm(mode === 'partial_refund' ? 'Mark this payment as partially refunded?' : 'Mark this payment as refunded?');
     if (!confirmed) return;
@@ -177,16 +145,11 @@ const OwnerPayments = () => {
   };
 
   const handleApprovePayout = async (request) => {
-    const form = getTransferForm(request);
-    if (!hasCompleteTransferForm(request)) {
-      window.alert('Please fill payment method, provider, transaction ID, and payer name before approval.');
-      return;
-    }
-    const confirmed = window.confirm('Approve this payout and mark it as transferred?');
+    const confirmed = window.confirm('Approve this payout and trigger the backend transfer now?');
     if (!confirmed) return;
     setBusyAction(`approve-${request.id}`);
     try {
-      await approveAndProcessPayout({ payoutRequest: request, ownerUser: user, transferDetails: form });
+      await approveAndProcessPayout({ payoutRequest: request, ownerUser: user });
     } catch (error) {
       window.alert(error.message || 'Unable to process payout right now.');
     } finally {
@@ -334,7 +297,7 @@ const OwnerPayments = () => {
             <div className="rounded-xl border border-base-200 bg-base-200/40 p-4 text-sm text-base-content/70">No payout requests found.</div>
           ) : pendingPayoutRequests.map((request) => {
             const status = String(request.status || '').toLowerCase();
-            const canApprove = [PAYOUT_STATUSES.DETAILS_SUBMITTED, PAYOUT_STATUSES.FAILED].includes(status) && hasCompleteTransferForm(request);
+            const canApprove = [PAYOUT_STATUSES.DETAILS_SUBMITTED, PAYOUT_STATUSES.FAILED].includes(status);
             const canReject = [PAYOUT_STATUSES.DETAILS_SUBMITTED, PAYOUT_STATUSES.FAILED, PAYOUT_STATUSES.APPROVED].includes(status);
             return (
               <div key={request.id} className="rounded-xl border border-base-200 bg-base-200/30 p-4 space-y-3">
@@ -360,86 +323,30 @@ const OwnerPayments = () => {
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 text-sm">
-                  <div className="space-y-3">
-                    <div>
-                      <div className="text-base-content/60 font-semibold mb-1">💸 Transfer Details (Manual)</div>
-                      {request.payoutMethod === 'bank_account' ? (
-                        <div className="rounded-lg bg-base-300 p-3 space-y-1">
-                          <div><span className="text-base-content/60">Name: </span><span className="font-bold">{request.payoutDetails?.accountHolderName || request.payoutDetailsMasked?.accountHolderName || '—'}</span></div>
-                          <div><span className="text-base-content/60">Bank: </span><span className="font-bold">{request.payoutDetails?.bankName || request.payoutDetailsMasked?.bankName || '—'}</span></div>
-                          <div><span className="text-base-content/60">Account No: </span><span className="font-bold">{request.payoutDetailsMasked?.accountNumberMasked || '—'}</span></div>
-                          <div><span className="text-base-content/60">IFSC: </span><span className="font-bold">{request.payoutDetailsMasked?.ifscMasked || '—'}</span></div>
-                          <div><span className="text-base-content/60">Amount: </span><span className="font-bold text-success">₹{Number(request.amount || 0).toLocaleString()}</span></div>
-                        </div>
-                      ) : (
-                        <div className="rounded-lg bg-base-300 p-3 space-y-1">
-                          <div><span className="text-base-content/60">Name: </span><span className="font-bold">{request.payoutDetails?.accountHolderName || request.payoutDetailsMasked?.accountHolderName || '—'}</span></div>
-                          <div><span className="text-base-content/60">UPI ID: </span><span className="font-bold">{request.payoutDetailsMasked?.upiIdMasked || '—'}</span></div>
-                          <div><span className="text-base-content/60">Amount: </span><span className="font-bold text-success">₹{Number(request.amount || 0).toLocaleString()}</span></div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="rounded-lg border border-base-300 bg-base-100/70 p-3">
-                      <div className="mb-3 text-base-content/70 font-semibold">Approve payout after entering transfer details</div>
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                        <label className="form-control">
-                          <span className="label-text text-xs text-base-content/60">Payment method type</span>
-                          <select className="select select-bordered select-sm mt-1" value={getTransferForm(request).paymentMethodType} onChange={(e) => updateTransferForm(request.id, 'paymentMethodType', e.target.value)}>
-                            <option value="">Select method</option>
-                            <option value="UPI">UPI</option>
-                            <option value="Bank Transfer">Bank Transfer</option>
-                            <option value="Wallet">Wallet</option>
-                            <option value="Other">Other</option>
-                          </select>
-                        </label>
-                        <label className="form-control">
-                          <span className="label-text text-xs text-base-content/60">Payment provider</span>
-                          <select className="select select-bordered select-sm mt-1" value={getTransferForm(request).paymentProvider} onChange={(e) => updateTransferForm(request.id, 'paymentProvider', e.target.value)}>
-                            <option value="">Select provider</option>
-                            <option value="Google Pay">Google Pay</option>
-                            <option value="PhonePe">PhonePe</option>
-                            <option value="Paytm">Paytm</option>
-                            <option value="BHIM">BHIM</option>
-                            <option value="Bank NEFT">Bank NEFT</option>
-                            <option value="Bank IMPS">Bank IMPS</option>
-                            <option value="Bank RTGS">Bank RTGS</option>
-                            <option value="Other">Other</option>
-                          </select>
-                        </label>
-                        <label className="form-control">
-                          <span className="label-text text-xs text-base-content/60">Transaction ID</span>
-                          <input className="input input-bordered input-sm mt-1" value={getTransferForm(request).transactionId} onChange={(e) => updateTransferForm(request.id, 'transactionId', e.target.value)} placeholder="Enter transaction ID" />
-                        </label>
-                        <label className="form-control">
-                          <span className="label-text text-xs text-base-content/60">Paid by</span>
-                          <input className="input input-bordered input-sm mt-1" value={getTransferForm(request).payerDisplayName} onChange={(e) => updateTransferForm(request.id, 'payerDisplayName', e.target.value)} placeholder="Sender account name" />
-                        </label>
-                      </div>
-                      <label className="form-control mt-3">
-                        <span className="label-text text-xs text-base-content/60">Optional note</span>
-                        <textarea className="textarea textarea-bordered textarea-sm mt-1 min-h-[80px]" value={getTransferForm(request).optionalNote} onChange={(e) => updateTransferForm(request.id, 'optionalNote', e.target.value)} placeholder="Optional payout note" />
-                      </label>
-                      <div className="mt-2 text-warning text-xs">⚠️ Required before final approval: method, provider, transaction ID, and payer name.</div>
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    <div>
-                      <div className="text-base-content/60">Timeline</div>
-                      <div className="font-medium">Submitted: {formatFirestoreDate(request.submittedAt || request.createdAt)}</div>
-                      <div className="text-base-content/60">Approved: {formatFirestoreDate(request.approvedAt)}</div>
-                      <div className="text-base-content/60">Processed: {formatFirestoreDate(request.processedAt)}</div>
-                    </div>
-                    {request.transferDetailsMasked ? (
+                  <div>
+                    <div className="text-base-content/60 font-semibold mb-1">💸 Transfer Details (Manual)</div>
+                    {request.payoutMethod === 'bank_account' ? (
                       <div className="rounded-lg bg-base-300 p-3 space-y-1">
-                        <div className="font-semibold text-base-content/70">Saved approval details</div>
-                        <div><span className="text-base-content/60">Method: </span><span className="font-bold">{request.transferDetailsMasked.paymentMethodType || '—'}</span></div>
-                        <div><span className="text-base-content/60">Provider: </span><span className="font-bold">{request.transferDetailsMasked.paymentProvider || '—'}</span></div>
-                        <div><span className="text-base-content/60">Txn ID: </span><span className="font-bold">{request.transferDetailsMasked.transactionId || '—'}</span></div>
-                        <div><span className="text-base-content/60">Paid by: </span><span className="font-bold">{request.transferDetailsMasked.payerDisplayName || '—'}</span></div>
-                        {request.transferDetailsMasked.optionalNote ? <div><span className="text-base-content/60">Note: </span><span className="font-bold">{request.transferDetailsMasked.optionalNote}</span></div> : null}
+                        <div><span className="text-base-content/60">Name: </span><span className="font-bold">{request.payoutDetails?.accountHolderName || request.payoutDetailsMasked?.accountHolderName || '—'}</span></div>
+                        <div><span className="text-base-content/60">Bank: </span><span className="font-bold">{request.payoutDetails?.bankName || request.payoutDetailsMasked?.bankName || '—'}</span></div>
+                        <div><span className="text-base-content/60">Account No: </span><span className="font-bold select-all">{request.payoutDetails?.accountNumber || '—'}</span></div>
+                        <div><span className="text-base-content/60">IFSC: </span><span className="font-bold select-all">{request.payoutDetails?.ifsc || '—'}</span></div>
+                        <div><span className="text-base-content/60">Amount: </span><span className="font-bold text-success">₹{Number(request.amount || 0).toLocaleString()}</span></div>
                       </div>
-                    ) : null}
+                    ) : (
+                      <div className="rounded-lg bg-base-300 p-3 space-y-1">
+                        <div><span className="text-base-content/60">Name: </span><span className="font-bold">{request.payoutDetails?.accountHolderName || request.payoutDetailsMasked?.accountHolderName || '—'}</span></div>
+                        <div><span className="text-base-content/60">UPI ID: </span><span className="font-bold select-all">{request.payoutDetails?.upiId || '—'}</span></div>
+                        <div><span className="text-base-content/60">Amount: </span><span className="font-bold text-success">₹{Number(request.amount || 0).toLocaleString()}</span></div>
+                      </div>
+                    )}
+                    <div className="mt-2 text-warning text-xs">⚠️ Pehle manually UPI/bank transfer karo, phir "Approve payout" click karo.</div>
+                  </div>
+                  <div>
+                    <div className="text-base-content/60">Timeline</div>
+                    <div className="font-medium">Submitted: {formatFirestoreDate(request.submittedAt || request.createdAt)}</div>
+                    <div className="text-base-content/60">Approved: {formatFirestoreDate(request.approvedAt)}</div>
+                    <div className="text-base-content/60">Processed: {formatFirestoreDate(request.processedAt)}</div>
                   </div>
                 </div>
 
