@@ -328,6 +328,7 @@ const Navbar = () => {
         <>
           <li><NavLink to="/dashboard" className={linkClass}>Dashboard</NavLink></li>
           {canPost && <li><NavLink to="/post" className={linkClass}>Post Task</NavLink></li>}
+          {canBid && <li><NavLink to="/earnings" className={linkClass}>Earnings</NavLink></li>}
           {isOwner && <li><NavLink to="/owner-dashboard" className={linkClass}>Owner Panel</NavLink></li>}
         </>
       )}
@@ -433,6 +434,7 @@ const Navbar = () => {
                       <li className="menu-title px-2"><span className="truncate">{user.displayName || 'User'}</span></li>
                       <li><Link to="/dashboard" className="rounded-2xl">Dashboard</Link></li>
                       <li><Link to="/profile" className="rounded-2xl">Profile</Link></li>
+                      {canBid && <li><Link to="/earnings" className="rounded-2xl">Earnings</Link></li>}
                       {isOwner && <li><Link to="/owner-dashboard" className="rounded-2xl">Owner Panel</Link></li>}
                       <div className="divider my-1"></div>
                       <li>

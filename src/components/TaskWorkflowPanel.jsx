@@ -21,7 +21,7 @@ import {
   REFUND_FEE_PERCENT,
 } from '../lib/workflow';
 import { formatFirestoreDate } from '../firebase';
-import { subscribeToTaskPayoutRequest, submitTaskPayoutDetails } from '../lib/payouts';
+import { getMaskedPayoutDestinationSummary, subscribeToTaskPayoutRequest, submitTaskPayoutDetails } from '../lib/payouts';
 import PublicUserIdentity from './PublicUserIdentity';
 import PayForTaskButton from './PayForTaskButton';
 
@@ -100,7 +100,11 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
   const canDeleteTask = isClient && ['open', 'expired'].includes(task.status);
   const canRepostTask = isClient && task.status === 'expired';
   const payoutStatus = String(payoutRequest?.status || task.payoutStatus || '').toLowerCase();
-  const canSubmitPayoutDetails = isSelectedFreelancer && task.status === 'completed' && isPaymentPaid && !['refund_pending', 'refunded', 'partial_refund'].includes(String(task.refundStatus || '').toLowerCase()) && payoutStatus !== 'paid';
+  const isPayoutPaid = payoutStatus === 'paid';
+  const payoutPaidAt = payoutRequest?.paidAt || payoutRequest?.processedAt || task.payoutProcessedAt || payoutRequest?.approvedAt;
+  const payoutDestinationSummary = getMaskedPayoutDestinationSummary(payoutRequest);
+  const hasSubmittedPayoutDetails = Boolean(payoutRequest?.payoutDetails || payoutRequest?.payoutDetailsMasked || payoutRequest?.submittedAt || payoutRequest?.createdAt || task.payoutRequestId);
+  const canSubmitPayoutDetails = isSelectedFreelancer && task.status === 'completed' && isPaymentPaid && !['refund_pending', 'refunded', 'partial_refund'].includes(String(task.refundStatus || '').toLowerCase()) && payoutStatus !== 'paid' && !hasSubmittedPayoutDetails;
 
   const setActionState = (action, stateError = '', stateSuccess = '') => {
     setBusyAction(action);
@@ -345,8 +349,12 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
 
           {isPaymentPaid ? (
             <div className="rounded-2xl border border-success/30 bg-success/10 p-4 text-sm text-base-content/80">
-              <div className="font-semibold">Order active</div>
-              <p className="mt-1">Payment has been verified and funds are now held in escrow. Delivery tools are unlocked for the selected freelancer.</p>
+              <div className="font-semibold">{isPayoutPaid ? 'Payment completed' : 'Order active'}</div>
+              <p className="mt-1">
+                {isPayoutPaid
+                  ? `Your payment is done through TaskMarket${payoutPaidAt ? ` on ${formatFirestoreDate(payoutPaidAt)}` : ''}.${payoutDestinationSummary ? ` Transfer destination: ${payoutDestinationSummary}.` : ''}`
+                  : 'Payment has been verified and funds are now held in escrow. Delivery tools are unlocked for the selected freelancer.'}
+              </p>
             </div>
           ) : null}
         </div>
@@ -487,7 +495,9 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
             <h5 className="font-semibold">Payout status</h5>
             <p className="text-sm text-base-content/60">
               {isSelectedFreelancer
-                ? 'Submit payout details so the owner can review and process your transfer.'
+                ? hasSubmittedPayoutDetails
+                  ? 'Your payout details are already saved for this task and are locked from further changes.'
+                  : 'Submit payout details so the owner can review and process your transfer.'
                 : 'Freelancer payout is reviewed separately after client approval and detail submission.'}
             </p>
           </div>
@@ -499,7 +509,42 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
           {payoutRequest?.failureReason ? <div className="text-sm text-error">Failure reason: {payoutRequest.failureReason}</div> : null}
           {payoutRequest?.rejectionReason ? <div className="text-sm text-error">Rejection reason: {payoutRequest.rejectionReason}</div> : null}
 
-          {canSubmitPayoutDetails ? (
+          {isSelectedFreelancer && isPayoutPaid ? (
+            <div className="grid gap-3 rounded-2xl border border-success/20 bg-success/5 p-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <div className="font-semibold">Payment details</div>
+                <div className="text-sm text-base-content/70">Task: <span className="font-medium text-base-content">{payoutRequest?.taskTitle || task.title || '—'}</span></div>
+                <div className="text-sm text-base-content/70">Amount: <span className="font-semibold text-success">{formatCurrency(payoutRequest?.amount || task.netAmountToFreelancer || 0)}</span></div>
+                <div className="text-sm text-base-content/70">Method: <span className="font-medium text-base-content">{payoutRequest?.payoutMethod || task.payoutMethod || '—'}</span></div>
+                {payoutDestinationSummary ? <div className="text-sm text-base-content/70">Sent to: <span className="font-medium text-base-content">{payoutDestinationSummary}</span></div> : null}
+              </div>
+              <div className="space-y-2">
+                <div className="font-semibold">Timeline</div>
+                <div className="text-sm text-base-content/70">Submitted: <span className="font-medium text-base-content">{formatFirestoreDate(payoutRequest?.submittedAt || payoutRequest?.createdAt)}</span></div>
+                <div className="text-sm text-base-content/70">Approved: <span className="font-medium text-base-content">{formatFirestoreDate(payoutRequest?.approvedAt)}</span></div>
+                <div className="text-sm text-base-content/70">Paid: <span className="font-medium text-base-content">{formatFirestoreDate(payoutPaidAt)}</span></div>
+                <div className="text-sm text-base-content/70">Status: <span className="font-medium text-success">Paid</span></div>
+              </div>
+            </div>
+          ) : null}
+
+          {isSelectedFreelancer && hasSubmittedPayoutDetails ? (
+            <div className="rounded-2xl border border-base-300 bg-base-100/70 p-4 space-y-3">
+              <div className="font-semibold">Saved payout details</div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2 text-sm text-base-content/70">
+                  <div>Account holder: <span className="font-medium text-base-content">{payoutRequest?.payoutDetails?.accountHolderName || payoutRequest?.payoutDetailsMasked?.accountHolderName || '—'}</span></div>
+                  <div>Method: <span className="font-medium text-base-content">{payoutRequest?.payoutMethod || task.payoutMethod || '—'}</span></div>
+                  {payoutDestinationSummary ? <div>Destination: <span className="font-medium text-base-content">{payoutDestinationSummary}</span></div> : null}
+                </div>
+                <div className="space-y-2 text-sm text-base-content/70">
+                  <div>Status: <span className="font-medium text-base-content">{payoutStatus || task.payoutStatus || 'details_submitted'}</span></div>
+                  <div>Submitted: <span className="font-medium text-base-content">{formatFirestoreDate(payoutRequest?.submittedAt || payoutRequest?.createdAt)}</span></div>
+                  <div className="text-warning">Payout details are locked after the first submission.</div>
+                </div>
+              </div>
+            </div>
+          ) : canSubmitPayoutDetails ? (
             <form className="space-y-3" onSubmit={handlePayoutDetailsSubmit}>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="form-control">
@@ -536,7 +581,7 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
                 </label>
               )}
               <button type="submit" className="btn btn-primary w-full sm:w-auto" disabled={busyAction === 'payout-details'}>
-                {busyAction === 'payout-details' ? 'Submitting...' : payoutRequest ? 'Update payout details' : 'Submit payout details'}
+                {busyAction === 'payout-details' ? 'Submitting...' : 'Submit payout details'}
               </button>
             </form>
           ) : null}

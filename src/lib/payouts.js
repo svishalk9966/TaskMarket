@@ -164,6 +164,26 @@ export const subscribeToAllPayoutRequests = (callback, onError) => {
   }, onError);
 };
 
+export const subscribeToFreelancerPayoutRequests = (freelancerId, callback, onError) => {
+  if (!freelancerId) return () => {};
+  const payoutQuery = query(
+    collection(db, PAYOUT_REQUESTS_COLLECTION),
+    where('freelancerId', '==', freelancerId),
+    orderBy('createdAt', 'desc'),
+  );
+  return onSnapshot(payoutQuery, (snapshot) => {
+    callback(snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() })));
+  }, onError);
+};
+
+export const getMaskedPayoutDestinationSummary = (payoutRequest = {}) => sanitizeText(
+  payoutRequest?.payoutDetailsMasked?.summary
+    || payoutRequest?.payoutDetailsMasked?.upiIdMasked
+    || payoutRequest?.payoutDetailsMasked?.accountNumberMasked
+    || '',
+  120,
+);
+
 const sanitizePayoutDetails = (details = {}) => {
   const method = normalizePayoutMethod(details.method);
   if (method === 'bank_account') {
@@ -220,6 +240,10 @@ export const submitTaskPayoutDetails = async ({ task, actor, details, existingRe
     submittedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
+
+  if (existingRequest?.payoutDetails || existingRequest?.payoutDetailsMasked || existingRequest?.submittedAt || existingRequest?.createdAt) {
+    throw new Error('Payout details have already been submitted for this task.');
+  }
 
   let payoutRequestId = existingRequest?.id || '';
   if (payoutRequestId) {
@@ -338,18 +362,21 @@ export const approveAndProcessPayout = async ({ payoutRequest, ownerUser }) => {
     escrowStatus: 'released',
   });
 
+  const paidAtIso = new Date().toISOString();
+
   await createNotification({
     userId: payoutRequest.freelancerId,
     taskId: payoutRequest.taskId,
     type: 'payout_paid',
-    title: 'Payout marked as sent',
-    message: `Your payout of ₹${payoutAmount} has been marked as sent to your ${destinationLabel} (${payoutDestination}). Please allow 1-2 business days to receive it.`,
+    title: 'Payment completed',
+    message: `Your payment is done through TaskMarket for ₹${payoutAmount} on ${new Date(paidAtIso).toLocaleString()}.${payoutDestination ? ` Transfer destination: ${payoutDestination}.` : ''}`,
     metadata: {
       payoutRequestId: payoutRequest.id,
       payoutAmount,
       provider: 'manual',
       payoutMethod,
       payoutDestination,
+      paidAt: paidAtIso,
     },
   });
 
