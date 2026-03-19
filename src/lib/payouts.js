@@ -334,7 +334,35 @@ export const rejectPayoutRequest = async ({ payoutRequest, ownerUser, reason = '
   });
 };
 
-export const approveAndProcessPayout = async ({ payoutRequest, ownerUser }) => {
+const sanitizeTransferMeta = (details = {}) => {
+  const paymentMethodType = sanitizeText(details.paymentMethodType, 40);
+  const paymentProvider = sanitizeText(details.paymentProvider, 60);
+  const transactionIdRaw = String(details.transactionId || '').trim();
+  const payerDisplayName = sanitizeText(details.payerDisplayName, 80);
+  const optionalNote = sanitizeText(details.optionalNote, 180);
+
+  if (!paymentMethodType) throw new Error('Payment method type is required.');
+  if (!paymentProvider) throw new Error('Payment provider is required.');
+  if (!transactionIdRaw) throw new Error('Transaction ID is required.');
+  if (!payerDisplayName) throw new Error('Payer display name is required.');
+
+  const transactionId = transactionIdRaw.replace(/\s+/g, ' ').slice(0, 120);
+  const visibleTail = transactionId.slice(-4);
+  const maskedTransactionId = transactionId.length <= 4
+    ? '*'.repeat(transactionId.length || 4)
+    : `${'*'.repeat(Math.max(4, transactionId.length - 4))}${visibleTail}`;
+
+  return {
+    paymentMethodType,
+    paymentProvider,
+    transactionId,
+    maskedTransactionId,
+    payerDisplayName,
+    optionalNote,
+  };
+};
+
+export const approveAndProcessPayout = async ({ payoutRequest, ownerUser, transferDetails }) => {
   if (!payoutRequest?.id || !payoutRequest?.taskId) throw new Error('Payout request is missing.');
 
   const payoutAmount = roundCurrency(payoutRequest.amount);
@@ -345,6 +373,7 @@ export const approveAndProcessPayout = async ({ payoutRequest, ownerUser }) => {
     120,
   );
   const destinationLabel = payoutMethod === 'bank_account' ? 'bank details' : 'UPI details';
+  const cleanTransferDetails = sanitizeTransferMeta(transferDetails);
 
   await updateDoc(doc(db, PAYOUT_REQUESTS_COLLECTION, payoutRequest.id), {
     status: PAYOUT_STATUSES.PAID,
@@ -356,6 +385,20 @@ export const approveAndProcessPayout = async ({ payoutRequest, ownerUser }) => {
     paidAt: serverTimestamp(),
     failureReason: '',
     rejectionReason: '',
+    transferDetails: {
+      paymentMethodType: cleanTransferDetails.paymentMethodType,
+      paymentProvider: cleanTransferDetails.paymentProvider,
+      transactionId: cleanTransferDetails.transactionId,
+      payerDisplayName: cleanTransferDetails.payerDisplayName,
+      optionalNote: cleanTransferDetails.optionalNote,
+    },
+    transferDetailsMasked: {
+      paymentMethodType: cleanTransferDetails.paymentMethodType,
+      paymentProvider: cleanTransferDetails.paymentProvider,
+      transactionId: cleanTransferDetails.maskedTransactionId,
+      payerDisplayName: cleanTransferDetails.payerDisplayName,
+      optionalNote: cleanTransferDetails.optionalNote,
+    },
     updatedAt: serverTimestamp(),
   });
 
@@ -390,6 +433,12 @@ export const approveAndProcessPayout = async ({ payoutRequest, ownerUser }) => {
       payoutMethod,
       payoutDestination,
       paidAt: paidAtIso,
+      transferDetails: {
+        paymentMethodType: cleanTransferDetails.paymentMethodType,
+        paymentProvider: cleanTransferDetails.paymentProvider,
+        transactionId: cleanTransferDetails.maskedTransactionId,
+        payerDisplayName: cleanTransferDetails.payerDisplayName,
+      },
     },
   });
 
