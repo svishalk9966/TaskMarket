@@ -16,7 +16,7 @@ const normalizePaymentStatus = (value = '') => {
   const normalized = String(value || '').trim().toLowerCase();
   if (['success', 'captured'].includes(normalized)) return 'paid';
   if (['pending', 'created'].includes(normalized)) return 'unpaid';
-  if (['paid', 'unpaid', 'failed', 'released', 'refunded'].includes(normalized)) return normalized;
+  if (['paid', 'unpaid', 'failed', 'released', 'refunded', 'escrow_held', 'pending'].includes(normalized)) return normalized;
   return 'unpaid';
 };
 

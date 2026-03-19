@@ -41,7 +41,7 @@ const Dashboard = () => {
   const normalizedEmail = (user?.email || '').toLowerCase();
   const postedTasks   = useMemo(() => tasks.filter((t) => t.postedById === user?.uid || (t.postedBy || '').toLowerCase() === normalizedEmail), [tasks, user?.uid, normalizedEmail]);
   const myBids        = useMemo(() => tasks.filter((t) => t.bids?.some((b) => b.freelancerId === user?.uid)), [tasks, user?.uid]);
-  const assignedTasks = useMemo(() => tasks.filter((t) => t.assignedTo === user?.uid), [tasks, user?.uid]);
+  const assignedTasks = useMemo(() => tasks.filter((t) => (t.assignedTo || t.selectedFreelancerId) === user?.uid), [tasks, user?.uid]);
 
   // Expired tasks that need repost action
   const expiredTasksNeedingAction = useMemo(() =>
@@ -52,7 +52,7 @@ const Dashboard = () => {
     posted:     postedTasks.length,
     active:     postedTasks.filter((t) => ['open','awaiting_payment','in_progress','delivered','revision_requested'].includes(t.status)).length,
     assigned:   assignedTasks.length,
-    completed:  tasks.filter((t) => t.status === 'completed' && (t.postedById === user?.uid || t.assignedTo === user?.uid)).length,
+    completed:  tasks.filter((t) => t.status === 'completed' && (t.postedById === user?.uid || (t.assignedTo || t.selectedFreelancerId) === user?.uid)).length,
     totalSpent: postedTasks.filter((t) => ['paid','released'].includes(t.paymentStatus)).reduce((a, t) => a + Number(t.totalPaidByClient || t.amount || t.budget || 0), 0),
     bidsPlaced: myBids.length,
     earnings:   assignedTasks.filter((t) => ['paid','released'].includes(t.paymentStatus)).reduce((a, t) => a + Number(t.amount || t.budget || 0), 0),
