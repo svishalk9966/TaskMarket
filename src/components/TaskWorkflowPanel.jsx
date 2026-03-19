@@ -21,6 +21,7 @@ import {
   REFUND_FEE_PERCENT,
 } from '../lib/workflow';
 import { formatFirestoreDate } from '../firebase';
+import { subscribeToTaskPayoutRequest, submitTaskPayoutDetails } from '../lib/payouts';
 import PublicUserIdentity from './PublicUserIdentity';
 import PayForTaskButton from './PayForTaskButton';
 
@@ -45,6 +46,13 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
   const [refundReason, setRefundReason] = useState('');
   const [showRefundForm, setShowRefundForm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [payoutRequest, setPayoutRequest] = useState(null);
+  const [payoutMethod, setPayoutMethod] = useState('upi');
+  const [payoutAccountHolderName, setPayoutAccountHolderName] = useState('');
+  const [payoutUpiId, setPayoutUpiId] = useState('');
+  const [payoutAccountNumber, setPayoutAccountNumber] = useState('');
+  const [payoutIfsc, setPayoutIfsc] = useState('');
+  const [payoutBankName, setPayoutBankName] = useState('');
 
   useEffect(() => {
     const unsubWorkspace = subscribeToTaskWorkspace(task.id, setWorkspaceEntries, (snapshotError) => {
@@ -53,9 +61,21 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
     const unsubDeliveries = subscribeToTaskDeliveries(task.id, setDeliveries, (snapshotError) => {
       console.error('Failed to load deliveries:', snapshotError);
     });
+    const unsubPayoutRequest = subscribeToTaskPayoutRequest(task.id, (nextRequest) => {
+      setPayoutRequest(nextRequest);
+      if (nextRequest?.payoutMethod) setPayoutMethod(nextRequest.payoutMethod);
+      if (nextRequest?.payoutDetails?.accountHolderName) setPayoutAccountHolderName(nextRequest.payoutDetails.accountHolderName);
+      if (nextRequest?.payoutDetails?.upiId) setPayoutUpiId(nextRequest.payoutDetails.upiId);
+      if (nextRequest?.payoutDetails?.accountNumber) setPayoutAccountNumber(nextRequest.payoutDetails.accountNumber);
+      if (nextRequest?.payoutDetails?.ifsc) setPayoutIfsc(nextRequest.payoutDetails.ifsc);
+      if (nextRequest?.payoutDetails?.bankName) setPayoutBankName(nextRequest.payoutDetails.bankName);
+    }, (snapshotError) => {
+      console.error('Failed to load payout request:', snapshotError);
+    });
     return () => {
       unsubWorkspace();
       unsubDeliveries();
+      unsubPayoutRequest();
     };
   }, [task.id]);
 
@@ -79,6 +99,8 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
   const refundIsDone = String(task.refundStatus || '').toLowerCase() === 'refunded';
   const canDeleteTask = isClient && ['open', 'expired'].includes(task.status);
   const canRepostTask = isClient && task.status === 'expired';
+  const payoutStatus = String(payoutRequest?.status || task.payoutStatus || '').toLowerCase();
+  const canSubmitPayoutDetails = isSelectedFreelancer && task.status === 'completed' && isPaymentPaid && !['refund_pending', 'refunded', 'partial_refund'].includes(String(task.refundStatus || '').toLowerCase()) && payoutStatus !== 'paid';
 
   const setActionState = (action, stateError = '', stateSuccess = '') => {
     setBusyAction(action);
@@ -192,6 +214,36 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
     }
   };
 
+
+  const handlePayoutDetailsSubmit = async (event) => {
+    event.preventDefault();
+    try {
+      setActionState('payout-details');
+      await submitTaskPayoutDetails({
+        task,
+        actor: user,
+        existingRequest: payoutRequest,
+        details: payoutMethod === 'bank_account'
+          ? {
+              method: 'bank_account',
+              accountHolderName: payoutAccountHolderName,
+              accountNumber: payoutAccountNumber,
+              ifsc: payoutIfsc,
+              bankName: payoutBankName,
+            }
+          : {
+              method: 'upi',
+              accountHolderName: payoutAccountHolderName,
+              upiId: payoutUpiId,
+            },
+      });
+      finalizeAction('Payout details submitted for admin review.');
+    } catch (actionError) {
+      setBusyAction('');
+      setError(actionError.message || 'Unable to submit payout details right now.');
+    }
+  };
+
   return (
     <div className="space-y-4 rounded-2xl border border-base-200 bg-base-100 p-4 shadow-sm sm:p-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -204,6 +256,7 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
           <span className={`badge ${isPaymentPaid ? 'badge-success' : task.status === 'awaiting_payment' ? 'badge-warning' : 'badge-outline'}`}>
             Payment: {task.paymentStatus || 'unpaid'}
           </span>
+          {task.status === 'completed' ? <span className="badge badge-outline">Payout: {payoutStatus || task.payoutStatus || 'details_pending'}</span> : null}
         </div>
       </div>
 
@@ -425,6 +478,68 @@ const TaskWorkflowPanel = ({ task, mode = 'client' }) => {
               {busyAction === 'disputed' ? 'Opening...' : 'Raise Dispute'}
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {task.status === 'completed' && (isSelectedFreelancer || isClient) ? (
+        <div className="space-y-3 rounded-xl border border-base-200 bg-base-200/30 p-4">
+          <div>
+            <h5 className="font-semibold">Payout status</h5>
+            <p className="text-sm text-base-content/60">
+              {isSelectedFreelancer
+                ? 'Submit payout details so the owner can review and process your transfer.'
+                : 'Freelancer payout is reviewed separately after client approval and detail submission.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-sm">
+            <span className="badge badge-outline">Status: {payoutStatus || task.payoutStatus || 'details_pending'}</span>
+            {payoutRequest?.amount ? <span className="badge badge-outline">Net payout: {formatCurrency(payoutRequest.amount)}</span> : task.netAmountToFreelancer ? <span className="badge badge-outline">Net payout: {formatCurrency(task.netAmountToFreelancer)}</span> : null}
+            {payoutRequest?.payoutMethod ? <span className="badge badge-outline">Method: {payoutRequest.payoutMethod}</span> : null}
+          </div>
+          {payoutRequest?.failureReason ? <div className="text-sm text-error">Failure reason: {payoutRequest.failureReason}</div> : null}
+          {payoutRequest?.rejectionReason ? <div className="text-sm text-error">Rejection reason: {payoutRequest.rejectionReason}</div> : null}
+
+          {canSubmitPayoutDetails ? (
+            <form className="space-y-3" onSubmit={handlePayoutDetailsSubmit}>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="form-control">
+                  <span className="label-text font-medium">Payout method</span>
+                  <select className="select select-bordered w-full" value={payoutMethod} onChange={(event) => setPayoutMethod(event.target.value)} disabled={busyAction === 'payout-details'}>
+                    <option value="upi">UPI</option>
+                    <option value="bank_account">Bank account</option>
+                  </select>
+                </label>
+                <label className="form-control">
+                  <span className="label-text font-medium">Account holder name</span>
+                  <input className="input input-bordered w-full" value={payoutAccountHolderName} onChange={(event) => setPayoutAccountHolderName(event.target.value)} disabled={busyAction === 'payout-details'} />
+                </label>
+              </div>
+              {payoutMethod === 'bank_account' ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <label className="form-control">
+                    <span className="label-text font-medium">Account number</span>
+                    <input className="input input-bordered w-full" value={payoutAccountNumber} onChange={(event) => setPayoutAccountNumber(event.target.value)} disabled={busyAction === 'payout-details'} />
+                  </label>
+                  <label className="form-control">
+                    <span className="label-text font-medium">IFSC</span>
+                    <input className="input input-bordered w-full" value={payoutIfsc} onChange={(event) => setPayoutIfsc(event.target.value.toUpperCase())} disabled={busyAction === 'payout-details'} />
+                  </label>
+                  <label className="form-control">
+                    <span className="label-text font-medium">Bank name</span>
+                    <input className="input input-bordered w-full" value={payoutBankName} onChange={(event) => setPayoutBankName(event.target.value)} disabled={busyAction === 'payout-details'} />
+                  </label>
+                </div>
+              ) : (
+                <label className="form-control">
+                  <span className="label-text font-medium">UPI ID</span>
+                  <input className="input input-bordered w-full" value={payoutUpiId} onChange={(event) => setPayoutUpiId(event.target.value)} disabled={busyAction === 'payout-details'} />
+                </label>
+              )}
+              <button type="submit" className="btn btn-primary w-full sm:w-auto" disabled={busyAction === 'payout-details'}>
+                {busyAction === 'payout-details' ? 'Submitting...' : payoutRequest ? 'Update payout details' : 'Submit payout details'}
+              </button>
+            </form>
+          ) : null}
         </div>
       ) : null}
 

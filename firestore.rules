@@ -23,7 +23,7 @@ service cloud.firestore {
 
     function isPaidTaskForSelectedFreelancer(taskId, freelancerId) {
       return taskDoc(taskId).exists()
-        && taskDoc(taskId).data.paymentStatus == 'paid'
+        && (taskDoc(taskId).data.paymentStatus == 'paid' || taskDoc(taskId).data.paymentStatus == 'escrow_held' || taskDoc(taskId).data.paymentStatus == 'released')
         && (taskDoc(taskId).data.selectedFreelancerId == freelancerId || taskDoc(taskId).data.assignedTo == freelancerId);
     }
 
@@ -76,6 +76,22 @@ service cloud.firestore {
         || resource.data.freelancerId == request.auth.uid
       ));
       allow update, delete: if isOwner();
+    }
+
+
+    match /payoutRequests/{requestId} {
+      allow create: if signedIn()
+        && request.resource.data.freelancerId == request.auth.uid
+        && taskDoc(request.resource.data.taskId).exists()
+        && (taskDoc(request.resource.data.taskId).data.selectedFreelancerId == request.auth.uid || taskDoc(request.resource.data.taskId).data.assignedTo == request.auth.uid);
+      allow read: if isOwner() || (signedIn() && resource.data.freelancerId == request.auth.uid);
+      allow update: if isOwner()
+        || (signedIn()
+          && resource.data.freelancerId == request.auth.uid
+          && request.resource.data.freelancerId == request.auth.uid
+          && request.resource.data.taskId == resource.data.taskId
+          && request.resource.data.clientId == resource.data.clientId);
+      allow delete: if isOwner();
     }
 
     match /notifications/{notificationId} {

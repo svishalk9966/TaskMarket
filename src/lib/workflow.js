@@ -483,9 +483,9 @@ export const updateTaskReviewState = async ({ task, actor, status, note = '' }) 
 
   if (status === 'completed') {
     patch.completedAt = serverTimestamp();
-    patch.paymentStatus = 'paid';
+    patch.paymentStatus = 'escrow_held';
     patch.escrowStatus = 'held';
-    patch.payoutStatus = 'ready_for_release';
+    patch.payoutStatus = 'details_pending';
     patch.disputeStatus = 'closed';
   }
 
@@ -502,9 +502,9 @@ export const updateTaskReviewState = async ({ task, actor, status, note = '' }) 
 
   if (status === 'completed') {
     await updatePaymentsByTaskId(liveTask.id, {
-      paymentStatus: 'paid',
+      paymentStatus: 'escrow_held',
       escrowStatus: 'held',
-      payoutStatus: 'ready_for_release',
+      payoutStatus: 'details_pending',
       disputeStatus: 'closed',
     });
   }
@@ -525,7 +525,7 @@ export const updateTaskReviewState = async ({ task, actor, status, note = '' }) 
     type: status,
     title: status === 'completed' ? 'Work accepted' : status === 'revision_requested' ? 'Revision requested' : 'Task disputed',
     message: status === 'completed'
-      ? `Your work on "${liveTask.title}" was accepted.`
+      ? `Your work on "${liveTask.title}" was accepted. Submit payout details to start admin payout review.`
       : status === 'revision_requested'
         ? `A revision was requested for "${liveTask.title}".`
         : `A dispute was opened for "${liveTask.title}".`,

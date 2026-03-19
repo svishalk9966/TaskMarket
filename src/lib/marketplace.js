@@ -171,8 +171,8 @@ export const resolveDisputeRecord = async (dispute = {}, resolution = 'closed') 
 
   if (normalizedResolution === 'resolved_for_freelancer') {
     taskPatch.status = 'completed';
-    taskPatch.payoutStatus = 'ready_for_release';
-    paymentPatch.payoutStatus = 'ready_for_release';
+    taskPatch.payoutStatus = 'details_pending';
+    paymentPatch.payoutStatus = 'details_pending';
   }
 
   if (normalizedResolution === 'resolved_for_client') {
@@ -194,7 +194,7 @@ export const getOwnerPaymentCounts = (payments = []) => payments.reduce((acc, pa
   const view = getPaymentPresentation(payment);
   acc.total += 1;
   if (view.escrowStatus === 'held') acc.escrowHeld += 1;
-  if (view.payoutStatus === 'ready_for_release') acc.readyForRelease += 1;
+  if (['details_submitted', 'under_review', 'approved', 'processing'].includes(view.payoutStatus)) acc.readyForRelease += 1;
   if (['refunded', 'partial_refund'].includes(view.refundStatus)) acc.refunded += 1;
   return acc;
 }, { total: 0, escrowHeld: 0, readyForRelease: 0, refunded: 0 });
