@@ -324,13 +324,23 @@ const OwnerPayments = () => {
 
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 text-sm">
                   <div>
-                    <div className="text-base-content/60">Payout details</div>
-                    <div className="font-medium">
-                      {request.payoutMethod === 'bank_account'
-                        ? `${request.payoutDetailsMasked?.bankName || 'Bank'} • ${request.payoutDetailsMasked?.accountNumberMasked || '—'} • ${request.payoutDetailsMasked?.ifscMasked || '—'}`
-                        : request.payoutDetailsMasked?.upiIdMasked || '—'}
-                    </div>
-                    <div className="text-base-content/60">Holder: {request.payoutDetailsMasked?.accountHolderName || '—'}</div>
+                    <div className="text-base-content/60 font-semibold mb-1">💸 Transfer Details (Manual)</div>
+                    {request.payoutMethod === 'bank_account' ? (
+                      <div className="rounded-lg bg-base-300 p-3 space-y-1">
+                        <div><span className="text-base-content/60">Name: </span><span className="font-bold">{request.payoutDetails?.accountHolderName || request.payoutDetailsMasked?.accountHolderName || '—'}</span></div>
+                        <div><span className="text-base-content/60">Bank: </span><span className="font-bold">{request.payoutDetails?.bankName || request.payoutDetailsMasked?.bankName || '—'}</span></div>
+                        <div><span className="text-base-content/60">Account No: </span><span className="font-bold select-all">{request.payoutDetails?.accountNumber || '—'}</span></div>
+                        <div><span className="text-base-content/60">IFSC: </span><span className="font-bold select-all">{request.payoutDetails?.ifsc || '—'}</span></div>
+                        <div><span className="text-base-content/60">Amount: </span><span className="font-bold text-success">₹{Number(request.amount || 0).toLocaleString()}</span></div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg bg-base-300 p-3 space-y-1">
+                        <div><span className="text-base-content/60">Name: </span><span className="font-bold">{request.payoutDetails?.accountHolderName || request.payoutDetailsMasked?.accountHolderName || '—'}</span></div>
+                        <div><span className="text-base-content/60">UPI ID: </span><span className="font-bold select-all">{request.payoutDetails?.upiId || '—'}</span></div>
+                        <div><span className="text-base-content/60">Amount: </span><span className="font-bold text-success">₹{Number(request.amount || 0).toLocaleString()}</span></div>
+                      </div>
+                    )}
+                    <div className="mt-2 text-warning text-xs">⚠️ Pehle manually UPI/bank transfer karo, phir "Approve payout" click karo.</div>
                   </div>
                   <div>
                     <div className="text-base-content/60">Timeline</div>
@@ -345,7 +355,7 @@ const OwnerPayments = () => {
 
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <button type="button" className="btn btn-success btn-sm" disabled={!canApprove || busyAction === `approve-${request.id}`} onClick={() => handleApprovePayout(request)}>
-                    {busyAction === `approve-${request.id}` ? 'Processing...' : status === PAYOUT_STATUSES.FAILED ? 'Retry payout' : 'Approve payout'}
+                    {busyAction === `approve-${request.id}` ? 'Marking paid...' : status === PAYOUT_STATUSES.FAILED ? '✅ Retry — Mark as Paid' : '✅ I Transferred — Mark as Paid'}
                   </button>
                   <button type="button" className="btn btn-outline btn-error btn-sm" disabled={!canReject || busyAction === `reject-${request.id}`} onClick={() => handleRejectPayout(request)}>
                     {busyAction === `reject-${request.id}` ? 'Saving...' : 'Reject payout'}

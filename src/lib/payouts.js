@@ -11,7 +11,7 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { auth, db } from '../firebase';
+import { db } from '../firebase';
 import { getTaskFeeBreakdown } from './feeModel';
 import { NOTIFICATIONS_COLLECTION } from './workflow';
 import { OWNER_EMAIL } from '../config';
@@ -216,7 +216,7 @@ export const submitTaskPayoutDetails = async ({ task, actor, details, existingRe
     status: PAYOUT_STATUSES.DETAILS_SUBMITTED,
     rejectionReason: '',
     failureReason: '',
-    provider: 'razorpayx',
+    provider: 'manual',
     submittedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -297,144 +297,65 @@ export const rejectPayoutRequest = async ({ payoutRequest, ownerUser, reason = '
   });
 };
 
-const postJson = async (url, payload, idToken) => {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
-  const text = await response.text();
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-  if (!response.ok) throw new Error(data.error || `Request failed with status ${response.status}.`);
-  return data;
-};
-
 export const approveAndProcessPayout = async ({ payoutRequest, ownerUser }) => {
   if (!payoutRequest?.id || !payoutRequest?.taskId) throw new Error('Payout request is missing.');
-  const currentUser = auth.currentUser;
-  const idToken = currentUser ? await currentUser.getIdToken() : '';
-  if (!idToken) throw new Error('Owner authentication token is missing. Please sign in again.');
+
+  const payoutAmount = roundCurrency(payoutRequest.amount);
+  const payoutMethod = normalizePayoutMethod(payoutRequest.payoutMethod || payoutRequest.payoutDetails?.method);
+  const payoutDestination = sanitizeText(
+    payoutRequest.payoutDetailsMasked?.summary
+      || (payoutMethod === 'bank_account' ? 'bank details' : 'UPI details'),
+    120,
+  );
+  const destinationLabel = payoutMethod === 'bank_account' ? 'bank details' : 'UPI details';
 
   await updateDoc(doc(db, PAYOUT_REQUESTS_COLLECTION, payoutRequest.id), {
-    status: PAYOUT_STATUSES.APPROVED,
+    status: PAYOUT_STATUSES.PAID,
+    provider: 'manual',
     reviewedById: ownerUser?.uid || '',
     reviewedByEmail: ownerUser?.email || '',
     approvedAt: serverTimestamp(),
+    processedAt: serverTimestamp(),
+    paidAt: serverTimestamp(),
+    failureReason: '',
+    rejectionReason: '',
     updatedAt: serverTimestamp(),
   });
+
   await updateDoc(doc(db, 'tasks', payoutRequest.taskId), {
-    payoutStatus: PAYOUT_STATUSES.APPROVED,
+    payoutStatus: PAYOUT_STATUSES.PAID,
+    payoutProcessedAt: serverTimestamp(),
+    paymentStatus: 'released',
+    escrowStatus: 'released',
     updatedAt: serverTimestamp(),
     clientUpdatedAt: Date.now(),
   });
+
   await updatePaymentsByTaskId(payoutRequest.taskId, {
-    payoutStatus: PAYOUT_STATUSES.APPROVED,
+    payoutStatus: PAYOUT_STATUSES.PAID,
+    provider: 'manual',
+    paymentStatus: 'released',
+    escrowStatus: 'released',
   });
 
-  await updateDoc(doc(db, PAYOUT_REQUESTS_COLLECTION, payoutRequest.id), {
-    status: PAYOUT_STATUSES.PROCESSING,
-    processingStartedAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  await updateDoc(doc(db, 'tasks', payoutRequest.taskId), {
-    payoutStatus: PAYOUT_STATUSES.PROCESSING,
-    updatedAt: serverTimestamp(),
-    clientUpdatedAt: Date.now(),
-  });
-  await updatePaymentsByTaskId(payoutRequest.taskId, {
-    payoutStatus: PAYOUT_STATUSES.PROCESSING,
-  });
-
-  try {
-    const providerResponse = await postJson('/api/razorpay/create-payout', {
+  await createNotification({
+    userId: payoutRequest.freelancerId,
+    taskId: payoutRequest.taskId,
+    type: 'payout_paid',
+    title: 'Payout marked as sent',
+    message: `Your payout of ₹${payoutAmount} has been marked as sent to your ${destinationLabel} (${payoutDestination}). Please allow 1-2 business days to receive it.`,
+    metadata: {
       payoutRequestId: payoutRequest.id,
-      taskId: payoutRequest.taskId,
-    }, idToken);
+      payoutAmount,
+      provider: 'manual',
+      payoutMethod,
+      payoutDestination,
+    },
+  });
 
-    const providerStatus = String(providerResponse.payout?.status || '').toLowerCase();
-    const normalizedStatus = ['processed', 'paid'].includes(providerStatus)
-      ? PAYOUT_STATUSES.PAID
-      : ['queued', 'pending', 'processing'].includes(providerStatus)
-        ? PAYOUT_STATUSES.PROCESSING
-        : ['failed', 'reversed', 'cancelled', 'rejected'].includes(providerStatus)
-          ? PAYOUT_STATUSES.FAILED
-          : PAYOUT_STATUSES.PROCESSING;
-
-    const payoutPatch = {
-      status: normalizedStatus,
-      providerPayoutId: providerResponse.payout?.id || '',
-      providerContactId: providerResponse.contact?.id || providerResponse.payoutRequest?.providerContactId || '',
-      providerFundAccountId: providerResponse.fundAccount?.id || providerResponse.payoutRequest?.providerFundAccountId || '',
-      providerStatus: providerStatus || '',
-      providerMode: providerResponse.payout?.mode || '',
-      providerResponse,
-      processedAt: serverTimestamp(),
-      failureReason: providerResponse.payout?.status_details?.description || providerResponse.payout?.failure_reason || '',
-      updatedAt: serverTimestamp(),
-    };
-
-    await updateDoc(doc(db, PAYOUT_REQUESTS_COLLECTION, payoutRequest.id), payoutPatch);
-    await updateDoc(doc(db, 'tasks', payoutRequest.taskId), {
-      payoutStatus: normalizedStatus,
-      payoutProcessedAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      clientUpdatedAt: Date.now(),
-      ...(normalizedStatus === PAYOUT_STATUSES.PAID ? { paymentStatus: 'released', escrowStatus: 'released' } : {}),
-    });
-    await updatePaymentsByTaskId(payoutRequest.taskId, {
-      payoutStatus: normalizedStatus,
-      providerPayoutId: providerResponse.payout?.id || '',
-      providerContactId: providerResponse.contact?.id || providerResponse.payoutRequest?.providerContactId || '',
-      providerFundAccountId: providerResponse.fundAccount?.id || providerResponse.payoutRequest?.providerFundAccountId || '',
-      providerStatus: providerStatus || '',
-      ...(normalizedStatus === PAYOUT_STATUSES.PAID ? { paymentStatus: 'released', escrowStatus: 'released' } : {}),
-    });
-
-    await createNotification({
-      userId: payoutRequest.freelancerId,
-      taskId: payoutRequest.taskId,
-      type: normalizedStatus === PAYOUT_STATUSES.PAID ? 'payout_paid' : normalizedStatus === PAYOUT_STATUSES.PROCESSING ? 'payout_processing' : 'payout_failed',
-      title: normalizedStatus === PAYOUT_STATUSES.PAID ? 'Payout sent' : normalizedStatus === PAYOUT_STATUSES.PROCESSING ? 'Payout processing' : 'Payout failed',
-      message: normalizedStatus === PAYOUT_STATUSES.PAID
-        ? `Your payout for "${payoutRequest.taskTitle}" has been initiated successfully.`
-        : normalizedStatus === PAYOUT_STATUSES.PROCESSING
-          ? `Your payout for "${payoutRequest.taskTitle}" is processing with the payout provider.`
-          : `Your payout for "${payoutRequest.taskTitle}" failed.${payoutPatch.failureReason ? ` Reason: ${payoutPatch.failureReason}` : ''}`,
-      metadata: { payoutRequestId: payoutRequest.id, providerPayoutId: providerResponse.payout?.id || '' },
-    });
-
-    return providerResponse;
-  } catch (error) {
-    await updateDoc(doc(db, PAYOUT_REQUESTS_COLLECTION, payoutRequest.id), {
-      status: PAYOUT_STATUSES.FAILED,
-      failureReason: error.message || 'Payout processing failed.',
-      updatedAt: serverTimestamp(),
-    });
-    await updateDoc(doc(db, 'tasks', payoutRequest.taskId), {
-      payoutStatus: PAYOUT_STATUSES.FAILED,
-      updatedAt: serverTimestamp(),
-      clientUpdatedAt: Date.now(),
-    });
-    await updatePaymentsByTaskId(payoutRequest.taskId, {
-      payoutStatus: PAYOUT_STATUSES.FAILED,
-      failureReason: error.message || 'Payout processing failed.',
-    });
-    await createNotification({
-      userId: payoutRequest.freelancerId,
-      taskId: payoutRequest.taskId,
-      type: 'payout_failed',
-      title: 'Payout failed',
-      message: `Your payout for "${payoutRequest.taskTitle}" could not be processed.${error.message ? ` Reason: ${error.message}` : ''}`,
-      metadata: { payoutRequestId: payoutRequest.id },
-    });
-    throw error;
-  }
+  return {
+    success: true,
+    status: PAYOUT_STATUSES.PAID,
+    message: `Payout of ₹${payoutAmount} was manually marked as paid for ${payoutDestination}.`,
+  };
 };
