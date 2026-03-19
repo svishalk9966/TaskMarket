@@ -11,7 +11,7 @@ import { db, formatFirestoreDate } from '../firebase';
 import { formatCurrency } from '../config';
 import { normalizeTask, sortTasksNewestFirst, TASKS_COLLECTION_NAME } from '../lib/tasks';
 import ReceiptModal from '../components/ReceiptModal';
-import { getMaskedPayoutDestinationSummary, subscribeToFreelancerTransactionHistory } from '../lib/payouts';
+import { getMaskedPayoutDestinationSummary, subscribeToFreelancerPayoutRequests } from '../lib/payouts';
 
 const normalizeStatus = (value = '') => String(value || '').trim().toLowerCase();
 
@@ -56,7 +56,7 @@ const Dashboard = () => {
       return undefined;
     }
     setPayoutLoading(true);
-    const unsubscribe = subscribeToFreelancerTransactionHistory(
+    const unsubscribe = subscribeToFreelancerPayoutRequests(
       user.uid,
       (items) => {
         setPayoutRequests(items);
@@ -95,7 +95,7 @@ const Dashboard = () => {
       acc.paidCount += 1;
       acc.totalPaid += amount;
     }
-    if (['details_pending', 'details_submitted', 'under_review', 'approved', 'processing'].includes(status)) {
+    if (['details_submitted', 'under_review', 'approved', 'processing'].includes(status)) {
       acc.pendingCount += 1;
       acc.pendingAmount += amount;
     }
@@ -364,7 +364,7 @@ const Dashboard = () => {
                           <div className="rounded-2xl border border-base-300 bg-base-200/20 p-4">
                             <div className="font-semibold">Timeline</div>
                             <div className="mt-3 space-y-2 text-sm text-base-content/70">
-                              <div>{request.timelineLabel || 'Submitted'}: <span className="font-medium text-base-content">{formatFirestoreDate(request.submittedAt || request.createdAt)}</span></div>
+                              <div>Submitted: <span className="font-medium text-base-content">{formatFirestoreDate(request.submittedAt || request.createdAt)}</span></div>
                               <div>Approved: <span className="font-medium text-base-content">{formatFirestoreDate(request.approvedAt)}</span></div>
                               <div>Processed: <span className="font-medium text-base-content">{formatFirestoreDate(request.processedAt)}</span></div>
                               <div>Paid: <span className="font-medium text-base-content">{formatFirestoreDate(paidAt)}</span></div>
@@ -379,7 +379,6 @@ const Dashboard = () => {
                               <div>Sent to: <span className="font-medium text-base-content">{destination || '—'}</span></div>
                               {request.rejectionReason ? <div className="text-error">Rejection reason: {request.rejectionReason}</div> : null}
                               {request.failureReason ? <div className="text-error">Failure reason: {request.failureReason}</div> : null}
-                              {request.historyNote ? <div>{request.historyNote}</div> : null}
                             </div>
                           </div>
                         </div>
