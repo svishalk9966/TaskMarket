@@ -340,6 +340,10 @@ export const acceptBidForTask = async ({ task, bid, actor }) => {
     amount: acceptedAmount,
   });
 
+  const freelancerId = bid.freelancerId || '';
+  const freelancerName = bid.freelancerName || bid.userName || bid.displayName || bid.freelancerEmail || 'Freelancer';
+  const freelancerEmail = bid.freelancerEmail || bid.userEmail || '';
+
   await updateDoc(doc(db, 'tasks', task.id), {
     status: 'awaiting_payment',
     paymentStatus: 'unpaid',
@@ -347,14 +351,14 @@ export const acceptBidForTask = async ({ task, bid, actor }) => {
     refundStatus: 'none',
     disputeStatus: 'closed',
     escrowStatus: 'not_funded',
-    assignedTo: bid.freelancerId,
+    assignedTo: freelancerId,
     assignedBidId: acceptedBidId,
     selectedBidId: acceptedBidId,
-    selectedFreelancerId: bid.freelancerId,
-    selectedFreelancerName: bid.freelancerName || '',
-    selectedFreelancerEmail: bid.freelancerEmail || '',
-    assignedFreelancerName: bid.freelancerName || '',
-    assignedFreelancerEmail: bid.freelancerEmail || '',
+    selectedFreelancerId: freelancerId,
+    selectedFreelancerName: freelancerName,
+    selectedFreelancerEmail: freelancerEmail,
+    assignedFreelancerName: freelancerName,
+    assignedFreelancerEmail: freelancerEmail,
     amount: acceptedAmount,
     acceptedAmount,
     acceptedBidAmount: acceptedAmount,
@@ -376,7 +380,7 @@ export const acceptBidForTask = async ({ task, bid, actor }) => {
   });
 
   await createNotification({
-    userId: bid.freelancerId,
+    userId: freelancerId,
     taskId: task.id,
     type: 'assignment',
     title: 'Bid accepted · awaiting payment',
@@ -387,7 +391,7 @@ export const acceptBidForTask = async ({ task, bid, actor }) => {
     task: { ...task, assignedTo: bid.freelancerId },
     actor,
     entryType: 'task_update',
-    message: `Accepted ${bid.freelancerName || 'a freelancer'} for this task. Client payment is now pending.`,
+    message: `Accepted ${freelancerName || 'a freelancer'} for this task. Client payment is now pending.`,
   });
 };
 

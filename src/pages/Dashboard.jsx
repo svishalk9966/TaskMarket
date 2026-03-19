@@ -39,9 +39,23 @@ const Dashboard = () => {
   }, [user, expandedTaskId]);
 
   const normalizedEmail = (user?.email || '').toLowerCase();
-  const postedTasks   = useMemo(() => tasks.filter((t) => t.postedById === user?.uid || (t.postedBy || '').toLowerCase() === normalizedEmail), [tasks, user?.uid, normalizedEmail]);
-  const myBids        = useMemo(() => tasks.filter((t) => t.bids?.some((b) => b.freelancerId === user?.uid)), [tasks, user?.uid]);
-  const assignedTasks = useMemo(() => tasks.filter((t) => (t.assignedTo || t.selectedFreelancerId) === user?.uid), [tasks, user?.uid]);
+  const getAssignedFreelancerId = (task = {}) => task.assignedTo || task.selectedFreelancerId || '';
+  const getAssignedFreelancerName = (task = {}) => task.assignedFreelancerName || task.selectedFreelancerName || '';
+  const hasAssignedFreelancer = (task = {}) => Boolean(getAssignedFreelancerId(task));
+  const isTaskClientOwnedByUser = (task = {}) => task.postedById === user?.uid || (task.postedBy || '').toLowerCase() === normalizedEmail;
+  const isTaskAssignedToUser = (task = {}) => getAssignedFreelancerId(task) === user?.uid;
+  const postedTasks = useMemo(
+    () => tasks.filter((t) => isTaskClientOwnedByUser(t)),
+    [tasks, user?.uid, normalizedEmail],
+  );
+  const myBids = useMemo(
+    () => tasks.filter((t) => t.bids?.some((b) => b.freelancerId === user?.uid)),
+    [tasks, user?.uid],
+  );
+  const assignedTasks = useMemo(
+    () => tasks.filter((t) => hasAssignedFreelancer(t) && (isTaskClientOwnedByUser(t) || isTaskAssignedToUser(t))),
+    [tasks, user?.uid, normalizedEmail],
+  );
 
   // Expired tasks that need repost action
   const expiredTasksNeedingAction = useMemo(() =>
@@ -107,7 +121,7 @@ const Dashboard = () => {
     const completedVisible = visibleTasks.filter((t) => t.status === 'completed');
     completedVisible.forEach(async (t) => {
       if (reviewedTasks[t.id] !== undefined) return;
-      const targetId = activeTab === 'posted' ? (t.assignedTo || t.selectedFreelancerId) : t.postedById;
+      const targetId = isTaskClientOwnedByUser(t) ? getAssignedFreelancerId(t) : t.postedById;
       if (!targetId) return;
       const already = await hasReviewed(targetId, user.uid, t.id);
       setReviewedTasks((prev) => ({ ...prev, [t.id]: already }));
@@ -299,15 +313,16 @@ const Dashboard = () => {
                           <div className="flex flex-wrap gap-2 text-xs text-base-content/60">
                             <span className="rounded-full border border-base-300 bg-base-100 px-3 py-1 capitalize">{task.status || 'open'}</span>
                             <span className="rounded-full border border-base-300 bg-base-100 px-3 py-1">{task.bids?.length || 0} bids</span>
-                            {task.assignedFreelancerName ? <span className="max-w-full rounded-full border border-base-300 bg-base-100 px-3 py-1 [overflow-wrap:anywhere]">Assigned: {task.assignedFreelancerName}</span> : null}
+                            {getAssignedFreelancerName(task) ? <span className="max-w-full rounded-full border border-base-300 bg-base-100 px-3 py-1 [overflow-wrap:anywhere]">Assigned: {getAssignedFreelancerName(task)}</span> : null}
                           </div>
                           {/* Receipt button — show when payment exists */}
                           {(() => {
                             const hasPaid = ['escrow_held','paid','released','refunded'].includes(task.paymentStatus);
                             const isRefunded = String(task.refundStatus||'').toLowerCase() === 'refunded';
-                            const isThisFreelancer = (task.selectedFreelancerId || task.assignedTo) === user?.uid;
-                            const showForClient = activeTab === 'posted' && hasPaid;
-                            const showForFreelancer = activeTab === 'assigned' && isThisFreelancer && (hasPaid || isRefunded);
+                            const isThisFreelancer = isTaskAssignedToUser(task);
+                            const isThisClient = isTaskClientOwnedByUser(task);
+                            const showForClient = isThisClient && hasPaid;
+                            const showForFreelancer = isThisFreelancer && (hasPaid || isRefunded);
                             if (!showForClient && !showForFreelancer) return null;
                             return (
                               <button
@@ -329,13 +344,14 @@ const Dashboard = () => {
 
                           {/* Leave a Review — only on completed tasks */}
                           {task.status === 'completed' && (() => {
-                            const targetId = activeTab === 'posted'
-                              ? (task.assignedTo || task.selectedFreelancerId)
+                            const isClientReviewing = isTaskClientOwnedByUser(task);
+                            const targetId = isClientReviewing
+                              ? getAssignedFreelancerId(task)
                               : task.postedById;
-                            const targetName = activeTab === 'posted'
-                              ? (task.assignedFreelancerName || task.selectedFreelancerName || 'Freelancer')
+                            const targetName = isClientReviewing
+                              ? (getAssignedFreelancerName(task) || 'Freelancer')
                               : (task.postedByName || task.clientName || 'Client');
-                            const targetRole = activeTab === 'posted' ? 'freelancer' : 'client';
+                            const targetRole = isClientReviewing ? 'freelancer' : 'client';
                             if (!targetId) return null;
                             if (reviewedTasks[task.id]) {
                               return (
@@ -395,7 +411,10 @@ const Dashboard = () => {
                           </p>
                         </div>
                       ) : (
-                        <TaskWorkflowPanel task={selectedTask} mode={activeTab === 'posted' ? 'client' : activeTab === 'assigned' ? 'assigned' : 'readonly'} />
+                        <TaskWorkflowPanel
+                          task={selectedTask}
+                          mode={isTaskClientOwnedByUser(selectedTask) ? 'client' : isTaskAssignedToUser(selectedTask) ? 'assigned' : 'readonly'}
+                        />
                       )}
                     </div>
                   </div>
